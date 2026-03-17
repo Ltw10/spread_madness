@@ -1,13 +1,12 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
 import { usePlayerModal } from '../context/PlayerModalContext'
 
-export function DraftBoard({ teams, players = [], ownership, draftLocked, pendingPick, onSubmitPick, submittingPick, onSubmitDraft, onAssign, onRevertPending, canRevertPending }) {
+export function DraftBoard({ teams, players = [], ownership, draftLocked, assigningPick, onSubmitDraft, onAssign, onUnassign }) {
   const { openPlayerCard } = usePlayerModal()
-  const [draggedTeam, setDraggedTeam] = useState(null)
-  const [dragOverSlot, setDragOverSlot] = useState(null)
-  /** Mobile: tap a team to select it, then tap a player to assign (avoids drag on touch) */
+  /** When set, the "assign team to player" modal is open; user picks a player from the modal */
   const [selectedTeamId, setSelectedTeamId] = useState(null)
+  /** When set, the "unassign team" modal is open; { team, owner } */
+  const [teamToUnassign, setTeamToUnassign] = useState(null)
 
   const getTeamOwner = (teamId) => {
     if (teamId == null || !ownership?.length) return null
@@ -15,52 +14,20 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, pendin
     return ownership.find((o) => String(o.team_id) === id)?.player ?? null
   }
 
-  const handleDragStart = (e, team) => {
-    if (draftLocked) return
-    setDraggedTeam(team)
-    e.dataTransfer.effectAllowed = 'move'
-    e.dataTransfer.setData('text/plain', team.id)
-  }
-
-  const handleDragOver = (e, playerId) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
-    if (draftLocked) return
-    setDragOverSlot(playerId)
-  }
-
-  const handleDragLeave = () => setDragOverSlot(null)
-
-  const handleDrop = (e, playerId) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragOverSlot(null)
-    if (!draggedTeam || draftLocked) return
-    assignTeamToPlayer(draggedTeam.id, playerId)
-    setDraggedTeam(null)
-  }
-
   const assignTeamToPlayer = (teamId, playerId) => {
     if (onAssign) onAssign(teamId, playerId)
     setSelectedTeamId(null)
   }
 
-  const handlePlayerSlotClick = (e, playerId) => {
-    if (draftLocked) return
-    if (selectedTeamId) {
-      e.preventDefault()
-      assignTeamToPlayer(selectedTeamId, playerId)
-      return
-    }
-    openPlayerCard(players.find((p) => p.id === playerId))
-  }
-
   const handleTeamClick = (e, team, owner) => {
-    if (draftLocked || owner) return
+    if (draftLocked) return
     e.preventDefault()
     e.stopPropagation()
-    setSelectedTeamId((prev) => (prev === team.id ? null : team.id))
+    if (owner) {
+      if (onUnassign) setTeamToUnassign({ team, owner })
+      return
+    }
+    setSelectedTeamId((prev) => (String(prev) === String(team.id) ? null : team.id))
   }
 
   const byRegion = (teams || []).reduce((acc, t) => {
@@ -71,97 +38,129 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, pendin
   const regions = Object.keys(byRegion).sort()
 
   const selectedTeam = selectedTeamId && teams?.find((t) => String(t.id) === String(selectedTeamId))
-  const pendingTeam = pendingPick && teams?.find((t) => String(t.id) === String(pendingPick.teamId))
-  const pendingPlayer = pendingPick && players?.find((p) => String(p.id) === String(pendingPick.playerId))
-  const showSubmitBar = !draftLocked && !!pendingPick
 
   return (
     <div className="space-y-4 md:space-y-6">
-      {/* Tap hint when a team is selected (mobile-friendly) */}
-      {!draftLocked && selectedTeam && !pendingPick && (
-        <div className="rounded-lg border-2 border-amber-400 bg-amber-500/15 px-4 py-3 text-center">
-          <p className="font-body text-sm text-amber-200">
-            Tap a player below to assign <strong>{selectedTeam.seed} {selectedTeam.name}</strong>
-          </p>
-          <button
-            type="button"
-            onClick={() => setSelectedTeamId(null)}
-            className="mt-2 font-body text-xs text-amber-300 underline"
+      {/* Unassign-team modal: confirm removing team from player */}
+      {teamToUnassign && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/60"
+            aria-hidden
+            onClick={() => setTeamToUnassign(null)}
+          />
+          <div
+            className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-600 bg-slate-900 shadow-xl p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="unassign-modal-title"
           >
-            Cancel
-          </button>
-        </div>
+            <h2 id="unassign-modal-title" className="font-display text-lg text-slate-100 mb-1">
+              Unassign team
+            </h2>
+            <p className="font-body text-sm text-slate-300 mb-4">
+              Remove <strong>{teamToUnassign.team.seed} {teamToUnassign.team.name}</strong> from {teamToUnassign.owner.avatar_emoji} {teamToUnassign.owner.name}? The team will be available to assign to someone else.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onUnassign) onUnassign(teamToUnassign.team.id)
+                  setTeamToUnassign(null)
+                }}
+                className="flex-1 rounded-lg bg-red-600 py-2.5 font-body font-medium text-white hover:bg-red-500"
+              >
+                Unassign
+              </button>
+              <button
+                type="button"
+                onClick={() => setTeamToUnassign(null)}
+                className="flex-1 rounded-lg border border-slate-500 bg-slate-700 py-2.5 font-body text-slate-200 hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
-      {/* Player slots — larger touch targets on mobile */}
-      <div className="flex flex-wrap gap-3 md:gap-4">
-        {players.map((p) => (
+      {/* Assign-team modal: when a team is selected, pick a player from this list */}
+      {!draftLocked && selectedTeam && (
+        <>
           <div
-            key={p.id}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                if (selectedTeamId) assignTeamToPlayer(selectedTeamId, p.id)
-                else openPlayerCard(p)
-              }
-            }}
-            onDragEnter={(e) => { e.preventDefault(); handleDragOver(e, p.id) }}
-            onDragOver={(e) => handleDragOver(e, p.id)}
-            onDragLeave={handleDragLeave}
-            onDrop={(e) => handleDrop(e, p.id)}
-            onClick={(e) => handlePlayerSlotClick(e, p.id)}
-            className={`
-              min-h-[52px] min-w-[140px] rounded-xl border-2 p-3 transition-colors touch-manipulation
-              md:min-h-0
-              ${dragOverSlot === p.id ? 'border-amber-400 bg-amber-500/20' : 'border-slate-600 bg-slate-800/80'}
-              ${selectedTeamId ? 'cursor-pointer active:bg-slate-700' : ''}
-            `}
+            className="fixed inset-0 z-40 bg-black/60"
+            aria-hidden
+            onClick={() => setSelectedTeamId(null)}
+          />
+          <div
+            className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-600 bg-slate-900 shadow-xl p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assign-modal-title"
           >
-            <div className="flex items-center gap-2">
-              <span className="h-4 w-4 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
-              <span className="font-body font-medium text-slate-200">
-                {p.avatar_emoji} {p.name}
-              </span>
-            </div>
-            <p className="mt-1 font-body text-xs text-slate-400">
-              {ownership?.filter((o) => o.player_id === p.id).length ?? 0} teams
+            <h2 id="assign-modal-title" className="font-display text-lg text-slate-100 mb-1">
+              Assign team to player
+            </h2>
+            <p className="font-body text-sm text-amber-200 mb-4">
+              <strong>{selectedTeam.seed} {selectedTeam.name}</strong>
+              {assigningPick && <span className="ml-2 text-slate-400">Saving…</span>}
             </p>
-          </div>
-        ))}
-      </div>
-
-      {/* Submit pick bar — directly below player slots so it's visible after drop */}
-      {showSubmitBar && (
-        <div className="rounded-lg border-2 border-emerald-500/60 bg-emerald-500/15 px-4 py-3" data-submit-pick-bar>
-          <p className="font-body text-sm text-emerald-200">
-            {pendingTeam && pendingPlayer ? (
-              <><strong>{pendingTeam.seed} {pendingTeam.name}</strong> → {pendingPlayer.avatar_emoji} {pendingPlayer.name}</>
-            ) : (
-              <>Pick ready — save to the board</>
-            )}
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <ul className="space-y-2 max-h-[60vh] overflow-y-auto">
+              {players.map((p) => {
+                const teamCount = ownership?.filter((o) => String(o.player_id) === String(p.id)).length ?? 0
+                return (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      onClick={() => assignTeamToPlayer(selectedTeamId, p.id)}
+                      disabled={assigningPick}
+                      className="w-full flex items-center gap-2 rounded-lg border border-slate-600 bg-slate-800 px-4 py-3 text-left font-body text-slate-200 hover:bg-slate-700 active:bg-slate-600 touch-manipulation min-h-[48px] disabled:opacity-60"
+                    >
+                      <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
+                      <span>{p.avatar_emoji} {p.name}</span>
+                      <span className="ml-auto font-body text-xs text-slate-500">{teamCount} teams</span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
             <button
               type="button"
-              onClick={onSubmitPick}
-              disabled={submittingPick}
-              className="min-h-[44px] touch-manipulation rounded-lg bg-emerald-600 px-4 py-2 font-body font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
-            >
-              {submittingPick ? 'Saving…' : 'Submit pick'}
-            </button>
-            <button
-              type="button"
-              onClick={onRevertPending}
-              disabled={submittingPick}
-              className="min-h-[44px] touch-manipulation rounded-lg border border-slate-500 bg-slate-700 px-4 py-2 font-body font-medium text-slate-200 hover:bg-slate-600"
+              onClick={() => setSelectedTeamId(null)}
+              className="mt-4 w-full rounded-lg border border-slate-500 bg-slate-700 py-2.5 font-body text-slate-200 hover:bg-slate-600"
             >
               Cancel
             </button>
           </div>
-        </div>
+        </>
       )}
+
+      {/* Player boxes — view only; tap name to see their drafted teams */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-3 md:gap-4 lg:grid-cols-3">
+        {players.map((p) => {
+          const teamCount = ownership?.filter((o) => String(o.player_id) === String(p.id)).length ?? 0
+          return (
+            <div
+              key={p.id}
+              className="flex min-h-[72px] flex-col justify-center rounded-xl border-2 border-slate-600 bg-slate-800/80 p-4"
+            >
+              <div className="flex items-center gap-2">
+                <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
+                <button
+                  type="button"
+                  onClick={() => openPlayerCard(p)}
+                  className="font-body font-medium text-slate-200 underline decoration-slate-500 underline-offset-2 hover:text-white hover:decoration-slate-400 text-left"
+                >
+                  {p.avatar_emoji} {p.name}
+                </button>
+              </div>
+              <p className="mt-1 font-body text-xs text-slate-400">
+                {teamCount} team{teamCount !== 1 ? 's' : ''} — tap name to view
+              </p>
+            </div>
+          )
+        })}
+      </div>
 
       {!draftLocked && (
         <div className="flex flex-wrap items-center gap-2">
@@ -185,27 +184,31 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, pendin
                 .sort((a, b) => a.seed - b.seed)
                 .map((team) => {
                   const owner = getTeamOwner(team.id)
-                  const isSelected = selectedTeamId === team.id
+                  const isSelected = String(selectedTeamId) === String(team.id)
                   const canAssign = !draftLocked && !owner
+                  const canUnassign = !draftLocked && !!owner && !!onUnassign
+                  const isClickable = canAssign || canUnassign
                   return (
                     <div
                       key={team.id}
-                      role={canAssign ? 'button' : undefined}
-                      tabIndex={canAssign ? 0 : undefined}
-                      draggable={canAssign}
-                      onDragStart={(e) => canAssign && handleDragStart(e, team)}
+                      role={isClickable ? 'button' : undefined}
+                      tabIndex={isClickable ? 0 : undefined}
                       onClick={(e) => handleTeamClick(e, team, owner)}
                       onKeyDown={(e) => {
-                        if (canAssign && (e.key === 'Enter' || e.key === ' ')) {
+                        if (!isClickable) return
+                        if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault()
-                          setSelectedTeamId((prev) => (prev === team.id ? null : team.id))
+                          if (canAssign) setSelectedTeamId((prev) => (String(prev) === String(team.id) ? null : team.id))
+                          else if (canUnassign) setTeamToUnassign({ team, owner })
                         }
                       }}
                       className={`
                         touch-manipulation rounded border px-2.5 py-2 font-body text-xs
                         md:px-2 md:py-1
-                        ${owner ? 'cursor-default border-slate-500 bg-slate-700/60 text-slate-200' : 'cursor-grab border-slate-600 bg-slate-800 text-slate-400'}
+                        ${owner ? 'border-slate-500 bg-slate-700/60 text-slate-200' : 'border-slate-600 bg-slate-800 text-slate-400'}
+                        ${isClickable ? 'cursor-pointer' : 'cursor-default'}
                         ${canAssign ? 'active:bg-slate-600 hover:bg-slate-700' : ''}
+                        ${canUnassign ? 'hover:bg-slate-600/80 active:bg-slate-600' : ''}
                         ${isSelected ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-900' : ''}
                       `}
                       style={owner ? { borderLeftColor: owner.color, borderLeftWidth: 3 } : {}}

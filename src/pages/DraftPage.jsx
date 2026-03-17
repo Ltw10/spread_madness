@@ -13,9 +13,7 @@ export function DraftPage() {
   const [newColor, setNewColor] = useState('#6366f1')
   const [newEmoji, setNewEmoji] = useState('🏀')
   const [addError, setAddError] = useState('')
-  /** When not locked: one unsaved pick. Submitting it writes to DB so others see it. */
-  const [pendingPick, setPendingPick] = useState(null)
-  const [submittingPick, setSubmittingPick] = useState(false)
+  const [assigningPick, setAssigningPick] = useState(false)
 
   useEffect(() => {
     if (!supabase) return
@@ -29,53 +27,47 @@ export function DraftPage() {
 
   const draftLocked = config.draft_locked === 'true'
 
-  /** Display = DB ownership + pending pick (so unsaved pick shows until Submit pick). */
+  /** Display = DB ownership with player resolved for display */
   const displayOwnership = useMemo(() => {
-    const base = (ownership || []).map((o) => ({
+    return (ownership || []).map((o) => ({
       ...o,
       player: o.player ?? players.find((p) => String(p.id) === String(o.player_id)) ?? null,
     }))
-    if (draftLocked || !pendingPick) return base
-    const without = base.filter((o) => String(o.team_id) !== String(pendingPick.teamId))
-    const player = players.find((p) => String(p.id) === String(pendingPick.playerId)) ?? null
-    return [...without, { team_id: pendingPick.teamId, player_id: pendingPick.playerId, player }]
-  }, [draftLocked, ownership, players, pendingPick])
+  }, [ownership, players])
 
-  const handleAssignTeam = (teamId, playerId) => {
-    setPendingPick({ teamId, playerId })
-  }
-
-  const handleRevertPending = () => {
-    setPendingPick(null)
-  }
-
-  const handleSubmitPick = async () => {
-    if (!pendingPick || !supabase) return
+  const handleAssignTeam = async (teamId, playerId) => {
+    if (!supabase || draftLocked) return
     setAddError('')
-    setSubmittingPick(true)
+    setAssigningPick(true)
     try {
-      await supabase.from('sm_ownership').update({ is_active: false }).eq('team_id', pendingPick.teamId)
+      await supabase.from('sm_ownership').update({ is_active: false }).eq('team_id', teamId)
       await supabase.from('sm_ownership').insert({
-        team_id: pendingPick.teamId,
-        player_id: pendingPick.playerId,
+        team_id: teamId,
+        player_id: playerId,
         acquired_round: 1,
         is_active: true,
       })
       await reloadOwnership()
-      setPendingPick(null)
     } catch (err) {
       setAddError(err?.message || 'Failed to save pick.')
     } finally {
-      setSubmittingPick(false)
+      setAssigningPick(false)
+    }
+  }
+
+  const handleUnassignTeam = async (teamId) => {
+    if (draftLocked || !supabase) return
+    setAddError('')
+    try {
+      await supabase.from('sm_ownership').update({ is_active: false }).eq('team_id', teamId)
+      await reloadOwnership()
+    } catch (err) {
+      setAddError(err?.message || 'Failed to unassign team.')
     }
   }
 
   const handleSubmitDraft = async () => {
     setAddError('')
-    if (pendingPick) {
-      setAddError('Submit your current pick first, or cancel it.')
-      return
-    }
     const teamIds = (teams || []).map((t) => t.id)
     const assignedSet = new Set((ownership || []).map((o) => o.team_id))
     const allAssigned = teamIds.length > 0 && teamIds.every((id) => assignedSet.has(id))
@@ -112,7 +104,7 @@ export function DraftPage() {
   return (
     <div className="min-h-screen p-4 md:p-6">
       <h1 className="font-display text-3xl tracking-wide text-white">Draft</h1>
-      <p className="mt-1 font-body text-slate-400">Assign teams to players, then Submit pick to save so others can see. Lock the draft when every team is assigned.</p>
+      <p className="mt-1 font-body text-slate-400">Tap a team to assign it to a player; the pick is saved immediately. Lock the draft when every team is assigned.</p>
 
       <form onSubmit={handleAddPlayer} className="mt-6 flex flex-wrap items-end gap-2">
         <input
@@ -158,13 +150,10 @@ export function DraftPage() {
             players={players}
             ownership={displayOwnership}
             draftLocked={draftLocked}
-            pendingPick={pendingPick}
-            onSubmitPick={handleSubmitPick}
-            submittingPick={submittingPick}
+            assigningPick={assigningPick}
             onSubmitDraft={handleSubmitDraft}
             onAssign={draftLocked ? undefined : handleAssignTeam}
-            onRevertPending={handleRevertPending}
-            canRevertPending={!!pendingPick}
+            onUnassign={draftLocked ? undefined : handleUnassignTeam}
           />
         </div>
       )}
