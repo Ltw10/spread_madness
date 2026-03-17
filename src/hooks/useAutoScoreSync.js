@@ -43,103 +43,65 @@ function isEspnEventFinal(ev) {
 }
 
 /**
- * Runs on app load and every POLL_MS: fetch ESPN, update our games' scores,
- * and auto-finalize any game ESPN marks as completed.
+ * One-shot sync: fetch ESPN scoreboard, update sm_games with scores (and spreads for scheduled),
+ * and auto-finalize games ESPN marks as completed. Used by auto-polling and by admin "Refresh scores now".
+ * @param {import('@supabase/supabase-js').SupabaseClient} client
+ * @param {Array} currentGames - list of games with team1, team2, etc.
+ * @param {() => void} [reloadGames] - called after updates
+ * @returns {{ error?: string, updated?: number }}
  */
-export function useAutoScoreSync(games, reloadGames) {
-  const intervalRef = useRef(null)
-  const gamesRef = useRef(games)
-  gamesRef.current = games
+export async function runScoreSyncOnce(client, currentGames, reloadGames) {
+  if (!client || !currentGames?.length) return { updated: 0 }
+  try {
+    const { games: espnGames, rawEvents = [] } = await fetchEspnScoreboard()
+    if (!espnGames?.length) return { updated: 0 }
 
-  const runSync = async () => {
-    const currentGames = gamesRef.current
-    if (!supabase || !currentGames?.length) return
-    try {
-      const { games: espnGames, rawEvents = [] } = await fetchEspnScoreboard()
-      if (!espnGames?.length) return
+    let updated = 0
+    for (const game of currentGames) {
+      if (game.status === 'final') continue
+      const matched = matchGameToEspnEvent(game, espnGames)
+      if (!matched) continue
 
-      for (const game of currentGames) {
-        if (game.status === 'final') continue
-        const matched = matchGameToEspnEvent(game, espnGames)
-        if (!matched) continue
+      const { event: ev, team1Score, team2Score } = matched
+      const scoresValid = Number.isFinite(team1Score) && Number.isFinite(team2Score)
+      if (!scoresValid) continue
 
-        const { event: ev, team1Score, team2Score } = matched
-        const scoresValid = Number.isFinite(team1Score) && Number.isFinite(team2Score)
+      const espnFinal = isEspnEventFinal(ev)
 
-        if (!scoresValid) continue
-
-        const espnFinal = isEspnEventFinal(ev)
-
-        if (espnFinal) {
-          await finalizeGame(supabase, game, team1Score, team2Score)
+      if (espnFinal) {
+        await finalizeGame(client, game, team1Score, team2Score)
+        updated++
+        if (reloadGames) reloadGames()
+      } else {
+        if (game.team1_score !== team1Score || game.team2_score !== team2Score) {
+          await client
+            .from('sm_games')
+            .update({
+              team1_score: team1Score,
+              team2_score: team2Score,
+              status: 'in_progress',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', game.id)
+          updated++
           if (reloadGames) reloadGames()
-        } else {
-          // In progress: just update scores and optionally status
-          if (game.team1_score !== team1Score || game.team2_score !== team2Score) {
-            await supabase
-              .from('sm_games')
-              .update({
-                team1_score: team1Score,
-                team2_score: team2Score,
-                status: 'in_progress',
-                updated_at: new Date().toISOString(),
-              })
-              .eq('id', game.id)
-            if (reloadGames) reloadGames()
-          }
-        }
-
-        // ESPN spread from "close" line: update only while game is scheduled (until it starts)
-        if (game.status === 'scheduled') {
-          const rawEvent = rawEvents.find((r) => r.id === ev.id)
-          const spreadInfo = rawEvent ? getSpreadFromEspnEvent(rawEvent) : null
-          if (spreadInfo) {
-            const t1 = game.team1 || {}
-            const t2 = game.team2 || {}
-            const favoredOurId =
-              String(t1.espn_id) === String(spreadInfo.favoredEspnId)
-                ? game.team1_id
-                : String(t2.espn_id) === String(spreadInfo.favoredEspnId)
-                  ? game.team2_id
-                  : null
-            if (favoredOurId != null && (game.spread !== spreadInfo.spread || game.spread_team_id !== favoredOurId)) {
-              await supabase
-                .from('sm_games')
-                .update({
-                  spread: spreadInfo.spread,
-                  spread_team_id: favoredOurId,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', game.id)
-              if (reloadGames) reloadGames()
-            }
-          }
         }
       }
 
-      // Spread-only pass: tournament scoreboard has more games (and often odds).
-      // Update close line for all scheduled games (even if they already have a spread) until the game starts.
-      const gamesScheduled = currentGames.filter((g) => g.status === 'scheduled')
-      if (gamesScheduled.length > 0) {
-        try {
-          const { games: tournamentGames, rawEvents: tournamentRawEvents } = await fetchTournamentScoreboard()
-          for (const game of gamesScheduled) {
-            const matched = matchGameToEspnEvent(game, tournamentGames)
-            if (!matched) continue
-            const rawEvent = tournamentRawEvents.find((r) => r.id === matched.event.id)
-            const spreadInfo = rawEvent ? getSpreadFromEspnEvent(rawEvent) : null
-            if (!spreadInfo) continue
-            const t1 = game.team1 || {}
-            const t2 = game.team2 || {}
-            const favoredOurId =
-              String(t1.espn_id) === String(spreadInfo.favoredEspnId)
-                ? game.team1_id
-                : String(t2.espn_id) === String(spreadInfo.favoredEspnId)
-                  ? game.team2_id
-                  : null
-            if (favoredOurId == null) continue
-            if (game.spread === spreadInfo.spread && game.spread_team_id === favoredOurId) continue
-            await supabase
+      if (game.status === 'scheduled') {
+        const rawEvent = rawEvents.find((r) => r.id === ev.id)
+        const spreadInfo = rawEvent ? getSpreadFromEspnEvent(rawEvent) : null
+        if (spreadInfo) {
+          const t1 = game.team1 || {}
+          const t2 = game.team2 || {}
+          const favoredOurId =
+            String(t1.espn_id) === String(spreadInfo.favoredEspnId)
+              ? game.team1_id
+              : String(t2.espn_id) === String(spreadInfo.favoredEspnId)
+                ? game.team2_id
+                : null
+          if (favoredOurId != null && (game.spread !== spreadInfo.spread || game.spread_team_id !== favoredOurId)) {
+            await client
               .from('sm_games')
               .update({
                 spread: spreadInfo.spread,
@@ -149,13 +111,63 @@ export function useAutoScoreSync(games, reloadGames) {
               .eq('id', game.id)
             if (reloadGames) reloadGames()
           }
-        } catch (tournamentErr) {
-          console.warn('Tournament spread sync failed:', tournamentErr)
         }
       }
-    } catch (err) {
-      console.warn('Auto score sync failed:', err)
     }
+
+    const gamesScheduled = currentGames.filter((g) => g.status === 'scheduled')
+    if (gamesScheduled.length > 0) {
+      try {
+        const { games: tournamentGames, rawEvents: tournamentRawEvents } = await fetchTournamentScoreboard()
+        for (const game of gamesScheduled) {
+          const matched = matchGameToEspnEvent(game, tournamentGames)
+          if (!matched) continue
+          const rawEvent = tournamentRawEvents.find((r) => r.id === matched.event.id)
+          const spreadInfo = rawEvent ? getSpreadFromEspnEvent(rawEvent) : null
+          if (!spreadInfo) continue
+          const t1 = game.team1 || {}
+          const t2 = game.team2 || {}
+          const favoredOurId =
+            String(t1.espn_id) === String(spreadInfo.favoredEspnId)
+              ? game.team1_id
+              : String(t2.espn_id) === String(spreadInfo.favoredEspnId)
+                ? game.team2_id
+                : null
+          if (favoredOurId == null) continue
+          if (game.spread === spreadInfo.spread && game.spread_team_id === favoredOurId) continue
+          await client
+            .from('sm_games')
+            .update({
+              spread: spreadInfo.spread,
+              spread_team_id: favoredOurId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', game.id)
+          if (reloadGames) reloadGames()
+        }
+      } catch (tournamentErr) {
+        console.warn('Tournament spread sync failed:', tournamentErr)
+      }
+    }
+
+    return { updated }
+  } catch (err) {
+    console.warn('Score sync failed:', err)
+    return { error: err?.message || String(err) }
+  }
+}
+
+/**
+ * Runs on app load and every POLL_MS: fetch ESPN, update our games' scores,
+ * and auto-finalize any game ESPN marks as completed.
+ */
+export function useAutoScoreSync(games, reloadGames) {
+  const intervalRef = useRef(null)
+  const gamesRef = useRef(games)
+  gamesRef.current = games
+
+  const runSync = async () => {
+    runScoreSyncOnce(supabase, gamesRef.current, reloadGames)
   }
 
   useEffect(() => {

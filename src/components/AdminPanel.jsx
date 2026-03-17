@@ -1,13 +1,15 @@
 import { useState } from 'react'
 import { useAdmin } from '../hooks/useAdmin'
 import { useGames } from '../hooks/useGames'
-import { useScores } from '../hooks/useScores'
+import { runScoreSyncOnce } from '../hooks/useAutoScoreSync'
+import { supabase } from '../lib/supabase'
 import { GameMatchup } from './GameMatchup'
 
 export function AdminPanel({ onLogout }) {
   const { config, setConfigValue, finalizeGame, createBracket, resetForNewGame, error: adminError } = useAdmin()
   const { games, reload: reloadGames } = useGames()
-  const { scores, refresh: refreshScores } = useScores(false)
+  const [syncResult, setSyncResult] = useState(null)
+  const [syncing, setSyncing] = useState(false)
   const [bracketResult, setBracketResult] = useState(null)
   const [finalizeModal, setFinalizeModal] = useState(null)
   const [overrideScores, setOverrideScores] = useState({ team1: '', team2: '' })
@@ -48,7 +50,7 @@ export function AdminPanel({ onLogout }) {
 
       <section>
         <h3 className="font-body font-medium text-slate-300">Bracket</h3>
-        <p className="text-xs text-slate-400">Create Round 1 games from teams (teams are seeded from ESPN on first load if empty).</p>
+        <p className="text-xs text-slate-400">Create the full bracket (all 6 rounds, 63 games) and assign teams to Round 1 matchups. Requires teams in the database—they are seeded from ESPN when you first open the app if empty.</p>
         <button
           type="button"
           onClick={async () => {
@@ -73,10 +75,31 @@ export function AdminPanel({ onLogout }) {
 
       <section>
         <h3 className="font-body font-medium text-slate-300">Scores</h3>
-        <p className="text-xs text-slate-400">ESPN polls every 60s. Manual override when finalizing.</p>
-        <button type="button" onClick={refreshScores} className="mt-1 rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500">
-          Refresh scores now
+        <p className="text-xs text-slate-400">ESPN polls every 60s. Use this to fetch scores from ESPN and save to the database now (e.g. if auto-polling isn’t updating).</p>
+        <button
+          type="button"
+          disabled={syncing || !games?.length}
+          onClick={async () => {
+            setSyncResult(null)
+            setSyncing(true)
+            try {
+              const result = await runScoreSyncOnce(supabase, games, reloadGames)
+              setSyncResult(result.error ? { error: result.error } : { updated: result.updated ?? 0 })
+            } catch (e) {
+              setSyncResult({ error: e?.message || 'Sync failed' })
+            } finally {
+              setSyncing(false)
+            }
+          }}
+          className="mt-1 rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500 disabled:opacity-60"
+        >
+          {syncing ? 'Refreshing…' : 'Refresh scores now'}
         </button>
+        {syncResult && (
+          <p className="mt-2 text-sm text-slate-400">
+            {syncResult.error ? <span className="text-red-400">{syncResult.error}</span> : `Updated ${syncResult.updated ?? 0} game(s).`}
+          </p>
+        )}
       </section>
 
       <section>

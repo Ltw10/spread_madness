@@ -222,6 +222,34 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, assign
           </div>
         ))}
       </div>
+
+      {/* Draft board: ordered list of picks (player → team) at bottom of page */}
+      <section className="rounded-xl border border-slate-600 bg-slate-900/60 p-4">
+        <h3 className="font-display text-sm uppercase tracking-wide text-slate-400 mb-3">Draft board</h3>
+        {(() => {
+          const ordered = [...(ownership || [])]
+            .filter((o) => o.player && o.team)
+            .sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
+          if (ordered.length === 0) {
+            return <p className="font-body text-sm text-slate-500">No picks yet.</p>
+          }
+          return (
+            <ol className="list-decimal list-inside space-y-1.5 font-body text-sm text-slate-200">
+              {ordered.map((o, i) => (
+                <li key={o.team_id ?? o.id ?? i} className="flex items-center gap-2">
+                  <span className="shrink-0 w-6 text-slate-500">{i + 1}.</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: o.player?.color }} />
+                    <span>{o.player?.avatar_emoji} {o.player?.name}</span>
+                  </span>
+                  <span className="text-slate-500">→</span>
+                  <span className="text-slate-300">{o.team?.seed} {o.team?.name}</span>
+                </li>
+              ))}
+            </ol>
+          )
+        })()}
+      </section>
     </div>
   )
 }
