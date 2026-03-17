@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { usePlayerModal } from '../context/PlayerModalContext'
 
-export function DraftBoard({ teams, players = [], ownership, draftLocked, onSubmitDraft, onAssign, onRevert, canRevert }) {
+export function DraftBoard({ teams, players = [], ownership, draftLocked, pendingPick, onSubmitPick, submittingPick, onSubmitDraft, onAssign, onRevertPending, canRevertPending }) {
   const { openPlayerCard } = usePlayerModal()
   const [draggedTeam, setDraggedTeam] = useState(null)
   const [dragOverSlot, setDragOverSlot] = useState(null)
@@ -42,18 +42,7 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, onSubm
   }
 
   const assignTeamToPlayer = (teamId, playerId) => {
-    if (onAssign) {
-      onAssign(teamId, playerId)
-    } else if (supabase) {
-      supabase.from('sm_ownership').update({ is_active: false }).eq('team_id', teamId).then(() =>
-        supabase.from('sm_ownership').insert({
-          team_id: teamId,
-          player_id: playerId,
-          acquired_round: 1,
-          is_active: true,
-        })
-      )
-    }
+    if (onAssign) onAssign(teamId, playerId)
     setSelectedTeamId(null)
   }
 
@@ -81,12 +70,15 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, onSubm
   }, {})
   const regions = Object.keys(byRegion).sort()
 
-  const selectedTeam = selectedTeamId && teams?.find((t) => t.id === selectedTeamId)
+  const selectedTeam = selectedTeamId && teams?.find((t) => String(t.id) === String(selectedTeamId))
+  const pendingTeam = pendingPick && teams?.find((t) => String(t.id) === String(pendingPick.teamId))
+  const pendingPlayer = pendingPick && players?.find((p) => String(p.id) === String(pendingPick.playerId))
+  const showSubmitBar = !draftLocked && !!pendingPick
 
   return (
     <div className="space-y-4 md:space-y-6">
       {/* Tap hint when a team is selected (mobile-friendly) */}
-      {!draftLocked && selectedTeam && (
+      {!draftLocked && selectedTeam && !pendingPick && (
         <div className="rounded-lg border-2 border-amber-400 bg-amber-500/15 px-4 py-3 text-center">
           <p className="font-body text-sm text-amber-200">
             Tap a player below to assign <strong>{selectedTeam.seed} {selectedTeam.name}</strong>
@@ -140,22 +132,45 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, onSubm
         ))}
       </div>
 
+      {/* Submit pick bar — directly below player slots so it's visible after drop */}
+      {showSubmitBar && (
+        <div className="rounded-lg border-2 border-emerald-500/60 bg-emerald-500/15 px-4 py-3" data-submit-pick-bar>
+          <p className="font-body text-sm text-emerald-200">
+            {pendingTeam && pendingPlayer ? (
+              <><strong>{pendingTeam.seed} {pendingTeam.name}</strong> → {pendingPlayer.avatar_emoji} {pendingPlayer.name}</>
+            ) : (
+              <>Pick ready — save to the board</>
+            )}
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onSubmitPick}
+              disabled={submittingPick}
+              className="min-h-[44px] touch-manipulation rounded-lg bg-emerald-600 px-4 py-2 font-body font-medium text-white hover:bg-emerald-500 disabled:opacity-60"
+            >
+              {submittingPick ? 'Saving…' : 'Submit pick'}
+            </button>
+            <button
+              type="button"
+              onClick={onRevertPending}
+              disabled={submittingPick}
+              className="min-h-[44px] touch-manipulation rounded-lg border border-slate-500 bg-slate-700 px-4 py-2 font-body font-medium text-slate-200 hover:bg-slate-600"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {!draftLocked && (
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={onRevert}
-            disabled={!canRevert}
-            className="min-h-[44px] touch-manipulation rounded-lg border border-slate-500 bg-slate-700 px-4 py-2.5 font-body font-medium text-slate-200 hover:bg-slate-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-slate-700"
-          >
-            Revert last move
-          </button>
-          <button
-            type="button"
             onClick={onSubmitDraft}
-            className="min-h-[44px] touch-manipulation rounded-lg bg-emerald-600 px-4 py-2.5 font-body font-medium text-white hover:bg-emerald-500 active:bg-emerald-500"
+            className="min-h-[44px] touch-manipulation rounded-lg bg-amber-600 px-4 py-2.5 font-body font-medium text-white hover:bg-amber-500 active:bg-amber-500"
           >
-            Submit Draft
+            Submit draft
           </button>
         </div>
       )}
