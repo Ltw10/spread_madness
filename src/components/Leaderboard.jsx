@@ -2,7 +2,7 @@ import { usePlayerModal } from '../context/PlayerModalContext'
 import { useOwnership } from '../hooks/useOwnership'
 import { usePlayers } from '../hooks/usePlayers'
 
-export function Leaderboard() {
+export function Leaderboard({ showHeading = true, embedded = false }) {
   const { openPlayerCard } = usePlayerModal()
   const { getOwnedTeamIds } = useOwnership()
   const { players } = usePlayers()
@@ -15,9 +15,13 @@ export function Leaderboard() {
   const sorted = [...aliveByPlayer].sort((a, b) => b.count - a.count)
 
   return (
-    <aside className="w-56 shrink-0 rounded-xl border border-slate-600 bg-slate-900/90 p-3">
-      <h2 className="font-display text-lg tracking-wide text-slate-100">Leaderboard</h2>
-      <p className="mb-2 font-body text-xs text-slate-400">Teams still alive</p>
+    <aside className={`rounded-xl border border-slate-600 bg-slate-900/90 p-3 ${embedded ? 'w-full border-0 bg-transparent p-0' : 'w-56 shrink-0 max-w-full'}`}>
+      {showHeading && (
+        <>
+          <h2 className="font-display text-lg tracking-wide text-slate-100">Leaderboard</h2>
+          <p className="mb-2 font-body text-xs text-slate-400">Teams still alive</p>
+        </>
+      )}
       <ul className="space-y-2">
         {sorted.map(({ player, count }) => (
           <li key={player.id} className="flex items-center gap-2">

@@ -11,6 +11,32 @@ const ROUND_LABELS = {
   6: 'National Championship',
 }
 
+/** Typical NCAA tournament round start dates (month 0-indexed). Used to pick default round on load. */
+const ROUND_START_DATES = [
+  { round: 1, month: 2, day: 19 }, // Round of 64 — Thursday
+  { round: 2, month: 2, day: 21 }, // Round of 32
+  { round: 3, month: 2, day: 27 }, // Sweet 16
+  { round: 4, month: 2, day: 29 }, // Elite 8
+  { round: 5, month: 3, day: 5 },  // Final Four (April)
+  { round: 6, month: 3, day: 6 },  // National Championship
+]
+
+/** Return the round number (1–6) that is "current" based on today's date. Before round 1 starts, returns 1. */
+function getCurrentRoundNumber() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const today = new Date(year, now.getMonth(), now.getDate())
+  today.setHours(0, 0, 0, 0)
+  let current = 1
+  for (const { round, month, day } of ROUND_START_DATES) {
+    const roundStart = new Date(year, month, day)
+    roundStart.setHours(0, 0, 0, 0)
+    if (roundStart <= today) current = round
+    else break
+  }
+  return current
+}
+
 /** Canonical Round of 64 matchup order (1v16, 8v9, 5v12, …). */
 const ROUND1_ORDER = [
   [1, 16], [8, 9], [5, 12], [4, 13], [6, 11], [3, 14], [7, 10], [2, 15],
@@ -22,8 +48,8 @@ const ROUND1_ORDER_KEY = (s1, s2) => {
   return idx >= 0 ? idx : 999
 }
 
-export function Bracket({ games, scoresByEspnId, getOwnerByTeamId }) {
-  const [selectedRound, setSelectedRound] = useState(null)
+export function Bracket({ games, scoresByEspnId, getOwnerByTeamId, headerExtra }) {
+  const [selectedRound, setSelectedRound] = useState(() => getCurrentRoundNumber())
 
   const byRegionThenRound = useMemo(() => {
     const regionMap = { East: {}, West: {}, South: {}, Midwest: {}, Finals: {} }
@@ -120,6 +146,7 @@ export function Bracket({ games, scoresByEspnId, getOwnerByTeamId }) {
           </button>
         ))}
       </div>
+      {headerExtra}
 
       {/* One row per round (1–4): each row has 4 region containers */}
       {(selectedRound == null || selectedRound <= 4) &&
