@@ -1,0 +1,25 @@
+# Dependencies
+node_modules
+
+# Build
+dist
+
+# Env (secrets)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Vite
+*.local
