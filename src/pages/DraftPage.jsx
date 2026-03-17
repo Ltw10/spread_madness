@@ -1,14 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
 import { DraftBoard } from '../components/DraftBoard'
+import { useGame } from '../context/GameContext'
+import { useGameConfig } from '../hooks/useGameConfig'
 import { usePlayers } from '../hooks/usePlayers'
 import { useOwnership } from '../hooks/useOwnership'
 import { supabase } from '../lib/supabase'
 
 export function DraftPage() {
+  const { currentGameId } = useGame()
+  const { config, setConfigValue } = useGameConfig(currentGameId)
   const { players, addPlayer, loading: playersLoading } = usePlayers()
   const { ownership, loading: ownershipLoading, reload: reloadOwnership } = useOwnership()
   const [teams, setTeams] = useState([])
-  const [config, setConfig] = useState({})
   const [newName, setNewName] = useState('')
   const [newColor, setNewColor] = useState('#6366f1')
   const [newEmoji, setNewEmoji] = useState('🏀')
@@ -18,11 +21,6 @@ export function DraftPage() {
   useEffect(() => {
     if (!supabase) return
     supabase.from('sm_teams').select('*').order('region').order('seed').then(({ data }) => setTeams(data || []))
-    supabase.from('sm_config').select('key, value').then(({ data }) => {
-      const map = {}
-      ;(data || []).forEach((r) => { map[r.key] = r.value })
-      setConfig(map)
-    })
   }, [])
 
   const draftLocked = config.draft_locked === 'true'
@@ -36,12 +34,17 @@ export function DraftPage() {
   }, [ownership, players])
 
   const handleAssignTeam = async (teamId, playerId) => {
-    if (!supabase || draftLocked) return
+    if (!supabase || !currentGameId || draftLocked) return
     setAddError('')
     setAssigningPick(true)
     try {
-      await supabase.from('sm_ownership').update({ is_active: false }).eq('team_id', teamId)
+      await supabase
+        .from('sm_ownership')
+        .update({ is_active: false })
+        .eq('game_instance_id', currentGameId)
+        .eq('team_id', teamId)
       await supabase.from('sm_ownership').insert({
+        game_instance_id: currentGameId,
         team_id: teamId,
         player_id: playerId,
         acquired_round: 1,
@@ -56,10 +59,14 @@ export function DraftPage() {
   }
 
   const handleUnassignTeam = async (teamId) => {
-    if (draftLocked || !supabase) return
+    if (draftLocked || !supabase || !currentGameId) return
     setAddError('')
     try {
-      await supabase.from('sm_ownership').update({ is_active: false }).eq('team_id', teamId)
+      await supabase
+        .from('sm_ownership')
+        .update({ is_active: false })
+        .eq('game_instance_id', currentGameId)
+        .eq('team_id', teamId)
       await reloadOwnership()
     } catch (err) {
       setAddError(err?.message || 'Failed to unassign team.')
@@ -75,10 +82,9 @@ export function DraftPage() {
       setAddError('Every team must be assigned to a player before locking the draft.')
       return
     }
-    if (!supabase) return
+    if (!currentGameId) return
     try {
-      await supabase.from('sm_config').upsert({ key: 'draft_locked', value: 'true', updated_at: new Date().toISOString() }, { onConflict: 'key' })
-      setConfig((c) => ({ ...c, draft_locked: 'true' }))
+      await setConfigValue('draft_locked', 'true')
       await reloadOwnership()
     } catch (err) {
       setAddError(err?.message || 'Failed to lock draft.')

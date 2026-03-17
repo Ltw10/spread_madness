@@ -1,13 +1,18 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useGame } from '../context/GameContext'
 import { usePlayerModal } from '../context/PlayerModalContext'
 
 export function TransferFeed({ limit = 10 }) {
+  const { currentGameId } = useGame()
   const { openPlayerCard } = usePlayerModal()
   const [events, setEvents] = useState([])
 
   useEffect(() => {
-    if (!supabase) return
+    if (!supabase || !currentGameId) {
+      setEvents([])
+      return
+    }
     async function load() {
       const { data } = await supabase
         .from('sm_transfer_events')
@@ -17,14 +22,21 @@ export function TransferFeed({ limit = 10 }) {
           from_player:sm_players!sm_transfer_events_from_player_id_fkey(id, name, avatar_emoji, color),
           to_player:sm_players!sm_transfer_events_to_player_id_fkey(id, name, avatar_emoji, color)
         `)
+        .eq('game_instance_id', currentGameId)
         .order('created_at', { ascending: false })
         .limit(limit)
       setEvents(data || [])
     }
     load()
-    const sub = supabase.channel('transfer_feed').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sm_transfer_events' }, load).subscribe()
-    return () => { sub.unsubscribe() }
-  }, [limit])
+    const channel = supabase.channel(`transfer_feed:${currentGameId}`)
+    channel.on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'sm_transfer_events', filter: `game_instance_id=eq.${currentGameId}` },
+      load
+    )
+    channel.subscribe()
+    return () => { channel.unsubscribe() }
+  }, [limit, currentGameId])
 
   if (events.length === 0) return null
 

@@ -55,24 +55,39 @@ export async function finalizeGame(supabase, game, team1Score, team2Score) {
   const underdogCovered = didUnderdogCover(coverTeamId, winnerTeamId, game.spread_team_id, team1Id, team2Id)
 
   if (underdogCovered) {
-    const { data: currentOwner } = await supabase.from('sm_ownership').select('id, player_id').eq('team_id', winnerTeamId).eq('is_active', true).single()
-    const { data: underdogOwner } = await supabase.from('sm_ownership').select('id, player_id').eq('team_id', coverTeamId).eq('is_active', true).single()
-    if (currentOwner && underdogOwner) {
-      await supabase.from('sm_ownership').update({ is_active: false }).eq('id', currentOwner.id)
-      await supabase.from('sm_ownership').insert({
-        team_id: winnerTeamId,
-        player_id: underdogOwner.player_id,
-        acquired_round: game.round,
-        transferred_from_player_id: currentOwner.player_id,
-        is_active: true,
-      })
-      await supabase.from('sm_transfer_events').insert({
-        game_id: game.id,
-        team_id: winnerTeamId,
-        from_player_id: currentOwner.player_id,
-        to_player_id: underdogOwner.player_id,
-        round: game.round,
-      })
+    const { data: winnerOwnershipRows } = await supabase
+      .from('sm_ownership')
+      .select('id, game_instance_id, player_id')
+      .eq('team_id', winnerTeamId)
+      .eq('is_active', true)
+    if (winnerOwnershipRows?.length) {
+      for (const currentOwner of winnerOwnershipRows) {
+        const { data: underdogOwner } = await supabase
+          .from('sm_ownership')
+          .select('id, player_id')
+          .eq('game_instance_id', currentOwner.game_instance_id)
+          .eq('team_id', coverTeamId)
+          .eq('is_active', true)
+          .single()
+        if (!underdogOwner) continue
+        await supabase.from('sm_ownership').update({ is_active: false }).eq('id', currentOwner.id)
+        await supabase.from('sm_ownership').insert({
+          game_instance_id: currentOwner.game_instance_id,
+          team_id: winnerTeamId,
+          player_id: underdogOwner.player_id,
+          acquired_round: game.round,
+          transferred_from_player_id: currentOwner.player_id,
+          is_active: true,
+        })
+        await supabase.from('sm_transfer_events').insert({
+          game_instance_id: currentOwner.game_instance_id,
+          game_id: game.id,
+          team_id: winnerTeamId,
+          from_player_id: currentOwner.player_id,
+          to_player_id: underdogOwner.player_id,
+          round: game.round,
+        })
+      }
     }
   }
 

@@ -1,13 +1,16 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAdmin } from '../hooks/useAdmin'
 import { useGames } from '../hooks/useGames'
+import { useGame } from '../context/GameContext'
 import { runScoreSyncOnce } from '../hooks/useAutoScoreSync'
 import { supabase } from '../lib/supabase'
+import { hashPassword, verifyPassword } from '../lib/passwordHash'
 import { GameMatchup } from './GameMatchup'
 
 export function AdminPanel({ onLogout }) {
   const { config, setConfigValue, finalizeGame, createBracket, resetForNewGame, error: adminError } = useAdmin()
   const { games, reload: reloadGames } = useGames()
+  const { currentGameId, games: gameInstances, renameGame, updateGamePassword } = useGame()
   const [syncResult, setSyncResult] = useState(null)
   const [syncing, setSyncing] = useState(false)
   const [bracketResult, setBracketResult] = useState(null)
@@ -16,6 +19,22 @@ export function AdminPanel({ onLogout }) {
   const [resetConfirm, setResetConfirm] = useState(false)
   const [resetAlsoPlayers, setResetAlsoPlayers] = useState(false)
   const [resetResult, setResetResult] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameResult, setRenameResult] = useState(null)
+  const [renaming, setRenaming] = useState(false)
+  const [adminPwCurrent, setAdminPwCurrent] = useState('')
+  const [adminPwNew, setAdminPwNew] = useState('')
+  const [adminPwResult, setAdminPwResult] = useState(null)
+  const [adminPwSaving, setAdminPwSaving] = useState(false)
+  const [gamePwCurrent, setGamePwCurrent] = useState('')
+  const [gamePwNew, setGamePwNew] = useState('')
+  const [gamePwResult, setGamePwResult] = useState(null)
+  const [gamePwSaving, setGamePwSaving] = useState(false)
+  const currentGame = currentGameId && gameInstances.find((g) => g.id === currentGameId)
+
+  useEffect(() => {
+    setRenameValue(currentGame?.name ?? '')
+  }, [currentGame?.name])
 
   const draftLocked = config.draft_locked === 'true'
 
@@ -112,6 +131,143 @@ export function AdminPanel({ onLogout }) {
           />
           <span className="text-sm text-slate-300">Draft locked</span>
         </label>
+      </section>
+
+      <section>
+        <h3 className="font-body font-medium text-slate-300">Rename game</h3>
+        <p className="text-xs text-slate-400">Change the name of the current game (shown in the nav and game selector).</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            placeholder="Game name"
+            className="rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 w-48"
+          />
+          <button
+            type="button"
+            disabled={renaming || !currentGameId || !renameValue.trim() || renameValue.trim() === currentGame?.name}
+            onClick={async () => {
+              setRenameResult(null)
+              setRenaming(true)
+              try {
+                await renameGame(currentGameId, renameValue.trim())
+                setRenameResult('Saved.')
+              } catch (e) {
+                setRenameResult(e?.message || 'Rename failed')
+              } finally {
+                setRenaming(false)
+              }
+            }}
+            className="rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500 disabled:opacity-60"
+          >
+            {renaming ? 'Saving…' : 'Rename'}
+          </button>
+        </div>
+        {renameResult && (
+          <p className="mt-2 text-sm text-slate-400">
+            {renameResult === 'Saved.' ? renameResult : <span className="text-red-400">{renameResult}</span>}
+          </p>
+        )}
+      </section>
+
+      <section>
+        <h3 className="font-body font-medium text-slate-300">Change admin password</h3>
+        <p className="text-xs text-slate-400">Used to log in to Admin and to create new games.</p>
+        <div className="mt-2 space-y-2">
+          <input
+            type="password"
+            value={adminPwCurrent}
+            onChange={(e) => setAdminPwCurrent(e.target.value)}
+            placeholder="Current admin password"
+            className="block w-full max-w-xs rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500"
+          />
+          <input
+            type="password"
+            value={adminPwNew}
+            onChange={(e) => setAdminPwNew(e.target.value)}
+            placeholder="New admin password"
+            className="block w-full max-w-xs rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500"
+          />
+          <button
+            type="button"
+            disabled={adminPwSaving || !adminPwCurrent.trim() || !adminPwNew.trim()}
+            onClick={async () => {
+              setAdminPwResult(null)
+              setAdminPwSaving(true)
+              try {
+                const { data } = await supabase.from('sm_config').select('value').eq('key', 'admin_password_hash').maybeSingle()
+                const hash = data?.value ?? ''
+                const valid = hash ? await verifyPassword(adminPwCurrent, hash) : adminPwCurrent === 'admin'
+                if (!valid) throw new Error('Wrong current password')
+                const newHash = await hashPassword(adminPwNew.trim())
+                await supabase.from('sm_config').upsert({ key: 'admin_password_hash', value: newHash, updated_at: new Date().toISOString() }, { onConflict: 'key' })
+                setAdminPwResult('Saved.')
+                setAdminPwCurrent('')
+                setAdminPwNew('')
+              } catch (e) {
+                setAdminPwResult(e?.message || 'Failed')
+              } finally {
+                setAdminPwSaving(false)
+              }
+            }}
+            className="rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500 disabled:opacity-60"
+          >
+            {adminPwSaving ? 'Saving…' : 'Change admin password'}
+          </button>
+        </div>
+        {adminPwResult && (
+          <p className="mt-2 text-sm text-slate-400">
+            {adminPwResult === 'Saved.' ? adminPwResult : <span className="text-red-400">{adminPwResult}</span>}
+          </p>
+        )}
+      </section>
+
+      <section>
+        <h3 className="font-body font-medium text-slate-300">Change game password</h3>
+        <p className="text-xs text-slate-400">Password required to open this game from the game selector. Leave current blank if the game has no password yet.</p>
+        <div className="mt-2 space-y-2">
+          <input
+            type="password"
+            value={gamePwCurrent}
+            onChange={(e) => setGamePwCurrent(e.target.value)}
+            placeholder="Current game password (if set)"
+            className="block w-full max-w-xs rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500"
+          />
+          <input
+            type="password"
+            value={gamePwNew}
+            onChange={(e) => setGamePwNew(e.target.value)}
+            placeholder="New game password"
+            className="block w-full max-w-xs rounded border border-slate-600 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500"
+          />
+          <button
+            type="button"
+            disabled={gamePwSaving || !currentGameId || !gamePwNew.trim()}
+            onClick={async () => {
+              setGamePwResult(null)
+              setGamePwSaving(true)
+              try {
+                await updateGamePassword(currentGameId, gamePwCurrent, gamePwNew)
+                setGamePwResult('Saved.')
+                setGamePwCurrent('')
+                setGamePwNew('')
+              } catch (e) {
+                setGamePwResult(e?.message || 'Failed')
+              } finally {
+                setGamePwSaving(false)
+              }
+            }}
+            className="rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500 disabled:opacity-60"
+          >
+            {gamePwSaving ? 'Saving…' : 'Change game password'}
+          </button>
+        </div>
+        {gamePwResult && (
+          <p className="mt-2 text-sm text-slate-400">
+            {gamePwResult === 'Saved.' ? gamePwResult : <span className="text-red-400">{gamePwResult}</span>}
+          </p>
+        )}
       </section>
 
       <section>

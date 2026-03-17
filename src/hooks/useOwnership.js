@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useGame } from '../context/GameContext'
 
 export function useOwnership() {
+  const { currentGameId } = useGame()
   const [ownership, setOwnership] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   async function load(silent = false) {
-    if (!supabase) {
+    if (!supabase || !currentGameId) {
+      setOwnership([])
       setLoading(false)
       return
     }
@@ -24,6 +27,7 @@ export function useOwnership() {
           player:sm_players!sm_ownership_player_id_fkey(id, name, color, avatar_emoji),
           transferred_from:sm_players!sm_ownership_transferred_from_player_id_fkey(id, name, avatar_emoji)
         `)
+        .eq('game_instance_id', currentGameId)
         .eq('is_active', true)
       if (e) throw e
       setOwnership(data || [])
@@ -36,11 +40,22 @@ export function useOwnership() {
   }
 
   useEffect(() => {
+    if (!currentGameId) {
+      setOwnership([])
+      setLoading(false)
+      return
+    }
     load()
     if (!supabase) return
-    const sub = supabase.channel('ownership').on('postgres_changes', { event: '*', schema: 'public', table: 'sm_ownership' }, load).subscribe()
-    return () => { sub.unsubscribe() }
-  }, [])
+    const channel = supabase.channel(`ownership:${currentGameId}`)
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sm_ownership', filter: `game_instance_id=eq.${currentGameId}` },
+      load
+    )
+    channel.subscribe()
+    return () => { channel.unsubscribe() }
+  }, [currentGameId])
 
   /** Add or replace one row in ownership (e.g. after assign). Keeps list in sync before silent reload. */
   function addOptimistic(row) {

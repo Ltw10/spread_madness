@@ -1,20 +1,27 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useGame } from '../context/GameContext'
 
 export function usePlayers() {
+  const { currentGameId } = useGame()
   const [players, setPlayers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   async function load() {
-    if (!supabase) {
+    if (!supabase || !currentGameId) {
+      setPlayers([])
       setLoading(false)
       return
     }
     setLoading(true)
     setError(null)
     try {
-      const { data, error: e } = await supabase.from('sm_players').select('*').order('name')
+      const { data, error: e } = await supabase
+        .from('sm_players')
+        .select('*')
+        .eq('game_instance_id', currentGameId)
+        .order('name')
       if (e) throw e
       setPlayers(data || [])
     } catch (err) {
@@ -26,31 +33,52 @@ export function usePlayers() {
   }
 
   useEffect(() => {
+    if (!currentGameId) {
+      setPlayers([])
+      setLoading(false)
+      return
+    }
     load()
     if (!supabase) return
-    const sub = supabase.channel('players').on('postgres_changes', { event: '*', schema: 'public', table: 'sm_players' }, load).subscribe()
-    return () => { sub.unsubscribe() }
-  }, [])
+    const channel = supabase.channel(`players:${currentGameId}`)
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sm_players', filter: `game_instance_id=eq.${currentGameId}` },
+      load
+    )
+    channel.subscribe()
+    return () => { channel.unsubscribe() }
+  }, [currentGameId])
 
   async function addPlayer(name, color = '#6366f1', avatar_emoji = '🏀') {
-    if (!supabase) throw new Error('Supabase not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.')
-    const { data, error: e } = await supabase.from('sm_players').insert({ name, color, avatar_emoji }).select().single()
+    if (!supabase || !currentGameId) throw new Error('Supabase not configured or no game selected.')
+    const { data, error: e } = await supabase
+      .from('sm_players')
+      .insert({ game_instance_id: currentGameId, name, color, avatar_emoji })
+      .select()
+      .single()
     if (e) throw e
     setPlayers((prev) => [...prev.filter((p) => p.id !== data.id), data].sort((a, b) => (a.name || '').localeCompare(b.name)))
     return data
   }
 
   async function updatePlayer(id, updates) {
-    if (!supabase) return
-    const { data, error: e } = await supabase.from('sm_players').update(updates).eq('id', id).select().single()
+    if (!supabase || !currentGameId) return
+    const { data, error: e } = await supabase
+      .from('sm_players')
+      .update(updates)
+      .eq('id', id)
+      .eq('game_instance_id', currentGameId)
+      .select()
+      .single()
     if (e) throw e
     setPlayers((prev) => prev.map((p) => (p.id === id ? data : p)))
     return data
   }
 
   async function removePlayer(id) {
-    if (!supabase) return
-    await supabase.from('sm_players').delete().eq('id', id)
+    if (!supabase || !currentGameId) return
+    await supabase.from('sm_players').delete().eq('id', id).eq('game_instance_id', currentGameId)
     setPlayers((prev) => prev.filter((p) => p.id !== id))
   }
 

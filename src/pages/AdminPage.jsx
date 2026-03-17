@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { AdminPanel } from '../components/AdminPanel'
+import { supabase } from '../lib/supabase'
+import { verifyPassword } from '../lib/passwordHash'
 
 const STORAGE_KEY = 'spread_madness_admin'
 
@@ -8,15 +10,27 @@ export function AdminPage() {
   const [authenticated, setAuthenticated] = useState(() => !!sessionStorage.getItem(STORAGE_KEY))
   const [error, setError] = useState('')
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault()
     if (!password.trim()) return
-    if (password === 'admin') {
-      sessionStorage.setItem(STORAGE_KEY, '1')
-      setAuthenticated(true)
-      setError('')
-    } else {
-      setError('Wrong password. Use "admin" for demo.')
+    try {
+      let valid = false
+      if (supabase) {
+        const { data } = await supabase.from('sm_config').select('value').eq('key', 'admin_password_hash').maybeSingle()
+        const hash = data?.value ?? ''
+        valid = hash ? await verifyPassword(password, hash) : password === 'admin'
+      } else {
+        valid = password === 'admin'
+      }
+      if (valid) {
+        sessionStorage.setItem(STORAGE_KEY, '1')
+        setAuthenticated(true)
+        setError('')
+      } else {
+        setError('Wrong password.')
+      }
+    } catch (err) {
+      setError(err?.message || 'Login failed.')
     }
   }
 

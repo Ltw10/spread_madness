@@ -35,6 +35,7 @@ Restart the dev server after changing `.env`.
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. In the **SQL Editor**, run the contents of `supabase/schema.sql`. This creates all tables (with the `sm_` prefix), RLS policies, and realtime. No separate seed file; teams are seeded from the ESPN API when the app first loads and `sm_teams` is empty.
+3. **Multi-game (optional):** If you want multiple pools/games (each with its own draft and ownership, sharing one bracket), run the migration: in the SQL Editor, run the contents of `supabase/migrations/20250316000000_add_game_instances.sql`. This adds game instances and scopes players, ownership, config, and transfer events per game. After that, the app will show a game selector on load; existing data is assigned to a "Default" game.
 
 ### 4. Run the app
 
