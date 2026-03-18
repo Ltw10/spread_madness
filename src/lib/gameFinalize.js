@@ -68,25 +68,36 @@ export async function finalizeGame(supabase, game, team1Score, team2Score) {
           .eq('game_instance_id', currentOwner.game_instance_id)
           .eq('team_id', coverTeamId)
           .eq('is_active', true)
-          .single()
-        if (!underdogOwner) continue
+          .maybeSingle()
         await supabase.from('sm_ownership').update({ is_active: false }).eq('id', currentOwner.id)
-        await supabase.from('sm_ownership').insert({
-          game_instance_id: currentOwner.game_instance_id,
-          team_id: winnerTeamId,
-          player_id: underdogOwner.player_id,
-          acquired_round: game.round,
-          transferred_from_player_id: currentOwner.player_id,
-          is_active: true,
-        })
-        await supabase.from('sm_transfer_events').insert({
-          game_instance_id: currentOwner.game_instance_id,
-          game_id: game.id,
-          team_id: winnerTeamId,
-          from_player_id: currentOwner.player_id,
-          to_player_id: underdogOwner.player_id,
-          round: game.round,
-        })
+        if (underdogOwner) {
+          await supabase.from('sm_ownership').insert({
+            game_instance_id: currentOwner.game_instance_id,
+            team_id: winnerTeamId,
+            player_id: underdogOwner.player_id,
+            acquired_round: game.round,
+            transferred_from_player_id: currentOwner.player_id,
+            is_active: true,
+          })
+          await supabase.from('sm_transfer_events').insert({
+            game_instance_id: currentOwner.game_instance_id,
+            game_id: game.id,
+            team_id: winnerTeamId,
+            from_player_id: currentOwner.player_id,
+            to_player_id: underdogOwner.player_id,
+            round: game.round,
+          })
+        } else {
+          // Covering team is unassigned: winner becomes unassigned and continues in bracket
+          await supabase.from('sm_transfer_events').insert({
+            game_instance_id: currentOwner.game_instance_id,
+            game_id: game.id,
+            team_id: winnerTeamId,
+            from_player_id: currentOwner.player_id,
+            to_player_id: null,
+            round: game.round,
+          })
+        }
       }
     }
   }

@@ -17,6 +17,7 @@ export function DraftPage() {
   const [newEmoji, setNewEmoji] = useState('🏀')
   const [addError, setAddError] = useState('')
   const [assigningPick, setAssigningPick] = useState(false)
+  const [showUnassignedConfirm, setShowUnassignedConfirm] = useState(false)
 
   useEffect(() => {
     if (!supabase) return
@@ -73,22 +74,55 @@ export function DraftPage() {
     }
   }
 
-  const handleSubmitDraft = async () => {
-    setAddError('')
-    const teamIds = (teams || []).map((t) => t.id)
-    const assignedSet = new Set((ownership || []).map((o) => o.team_id))
-    const allAssigned = teamIds.length > 0 && teamIds.every((id) => assignedSet.has(id))
-    if (!allAssigned) {
-      setAddError('Every team must be assigned to a player before locking the draft.')
-      return
-    }
+  const lockDraft = async () => {
     if (!currentGameId) return
+    setAddError('')
     try {
       await setConfigValue('draft_locked', 'true')
       await reloadOwnership()
+      setShowUnassignedConfirm(false)
     } catch (err) {
       setAddError(err?.message || 'Failed to lock draft.')
     }
+  }
+
+  const handleSubmitDraft = async () => {
+    setAddError('')
+    const playersList = players || []
+    const ownershipList = ownership || []
+    const teamIds = (teams || []).map((t) => t.id)
+
+    if (playersList.length === 0) {
+      setAddError('Add at least one player before submitting the draft.')
+      return
+    }
+
+    const countByPlayer = new Map()
+    for (const p of playersList) {
+      countByPlayer.set(String(p.id), 0)
+    }
+    for (const o of ownershipList) {
+      const pid = String(o.player_id)
+      if (countByPlayer.has(pid)) countByPlayer.set(pid, countByPlayer.get(pid) + 1)
+    }
+    const counts = [...countByPlayer.values()]
+    const first = counts[0]
+    const allSame = counts.length > 0 && counts.every((c) => c === first)
+
+    if (!allSame) {
+      setAddError('Each player must have the same number of teams before submitting the draft.')
+      return
+    }
+
+    const assignedSet = new Set(ownershipList.map((o) => o.team_id))
+    const allAssigned = teamIds.length > 0 && teamIds.every((id) => assignedSet.has(id))
+
+    if (allAssigned) {
+      await lockDraft()
+      return
+    }
+
+    setShowUnassignedConfirm(true)
   }
 
   const handleAddPlayer = async (e) => {
@@ -110,7 +144,7 @@ export function DraftPage() {
   return (
     <div className="min-h-screen p-4 md:p-6">
       <h1 className="font-display text-3xl tracking-wide text-white">Draft</h1>
-      <p className="mt-1 font-body text-slate-400">Tap a team to assign it to a player; the pick is saved immediately. Lock the draft when every team is assigned.</p>
+      <p className="mt-1 font-body text-slate-400">Tap a team to assign it to a player; the pick is saved immediately. Each player must have the same number of teams. Submit the draft when ready; unassigned teams can still advance and eliminate player teams.</p>
 
       <form onSubmit={handleAddPlayer} className="mt-6 flex flex-wrap items-end gap-2">
         <input
@@ -146,6 +180,46 @@ export function DraftPage() {
         </button>
       </form>
       {addError && <p className="mt-2 text-sm text-red-400">{addError}</p>}
+
+      {/* Confirm submit with unassigned teams */}
+      {showUnassignedConfirm && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/60"
+            aria-hidden
+            onClick={() => setShowUnassignedConfirm(false)}
+          />
+          <div
+            className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-600 bg-slate-900 p-4 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="unassigned-submit-title"
+          >
+            <h2 id="unassigned-submit-title" className="font-display text-lg text-slate-100 mb-1">
+              Not all teams are assigned
+            </h2>
+            <p className="font-body text-sm text-slate-300 mb-4">
+              Unassigned teams can still advance in the bracket and eliminate player teams. Do you want to continue and submit the draft?
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={lockDraft}
+                className="flex-1 rounded-lg bg-amber-600 py-2.5 font-body font-medium text-white hover:bg-amber-500"
+              >
+                Continue and submit
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowUnassignedConfirm(false)}
+                className="flex-1 rounded-lg border border-slate-500 bg-slate-700 py-2.5 font-body text-slate-200 hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       {(playersLoading || ownershipLoading) ? (
         <p className="mt-6 text-slate-400">Loading…</p>
