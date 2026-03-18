@@ -21,7 +21,7 @@ export function usePlayers() {
         .from('sm_players')
         .select('*')
         .eq('game_instance_id', currentGameId)
-        .order('name')
+        .order('created_at', { ascending: true })
       if (e) throw e
       setPlayers(data || [])
     } catch (err) {
@@ -58,7 +58,11 @@ export function usePlayers() {
       .select()
       .single()
     if (e) throw e
-    setPlayers((prev) => [...prev.filter((p) => p.id !== data.id), data].sort((a, b) => (a.name || '').localeCompare(b.name)))
+    // Keep ordering based on when players were added.
+    setPlayers((prev) => {
+      const next = [...prev.filter((p) => p.id !== data.id), data]
+      return next.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0))
+    })
     return data
   }
 

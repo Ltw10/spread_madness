@@ -1,10 +1,25 @@
 import { useState } from 'react'
 import { usePlayerModal } from '../context/PlayerModalContext'
 
-export function DraftBoard({ teams, players = [], ownership, draftLocked, assigningPick, onSubmitDraft, onAssign, onUnassign }) {
+export function DraftBoard({
+  teams,
+  players = [],
+  ownership,
+  draftLocked,
+  adminMode,
+  assigningPick,
+  currentTurnPlayer,
+  onSubmitDraft,
+  onPickTeam,
+  onUnassign,
+  onAdminPickTeam,
+  onAdminUnassign,
+  lastPickedTeamId,
+}) {
   const { openPlayerCard } = usePlayerModal()
-  /** When set, the "assign team to player" modal is open; user picks a player from the modal */
+  /** When set, the "confirm pick" modal is open for the selected unowned team */
   const [selectedTeamId, setSelectedTeamId] = useState(null)
+  const [adminSelectedPlayerId, setAdminSelectedPlayerId] = useState(null)
   /** When set, the "unassign team" modal is open; { team, owner } */
   const [teamToUnassign, setTeamToUnassign] = useState(null)
 
@@ -14,19 +29,27 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, assign
     return ownership.find((o) => String(o.team_id) === id)?.player ?? null
   }
 
-  const assignTeamToPlayer = (teamId, playerId) => {
-    if (onAssign) onAssign(teamId, playerId)
-    setSelectedTeamId(null)
-  }
-
   const handleTeamClick = (e, team, owner) => {
-    if (draftLocked) return
+    if (draftLocked && !adminMode) return
+    if (assigningPick) return
     e.preventDefault()
     e.stopPropagation()
     if (owner) {
-      if (onUnassign) setTeamToUnassign({ team, owner })
+      if (adminMode && onAdminPickTeam) {
+        // Admin can reassign any team (owned or unowned).
+        setAdminSelectedPlayerId(null)
+        setSelectedTeamId(team.id)
+        return
+      }
+      const canUnassignNormal = !!onUnassign && lastPickedTeamId != null && String(team.id) === String(lastPickedTeamId)
+      const canUnassignAdmin = !!adminMode && !!onAdminUnassign
+      if (canUnassignNormal || canUnassignAdmin) setTeamToUnassign({ team, owner })
       return
     }
+    const canAssignNormal = !!currentTurnPlayer && !!onPickTeam
+    const canAssignAdmin = !!adminMode && !!onAdminPickTeam
+    if (!canAssignNormal && !canAssignAdmin) return
+    setAdminSelectedPlayerId(null)
     setSelectedTeamId((prev) => (String(prev) === String(team.id) ? null : team.id))
   }
 
@@ -65,7 +88,8 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, assign
               <button
                 type="button"
                 onClick={() => {
-                  if (onUnassign) onUnassign(teamToUnassign.team.id)
+                  if (adminMode && onAdminUnassign) onAdminUnassign(teamToUnassign.team.id)
+                  else if (onUnassign) onUnassign(teamToUnassign.team.id)
                   setTeamToUnassign(null)
                 }}
                 className="flex-1 rounded-lg bg-red-600 py-2.5 font-body font-medium text-white hover:bg-red-500"
@@ -84,8 +108,8 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, assign
         </>
       )}
 
-      {/* Assign-team modal: when a team is selected, pick a player from this list */}
-      {!draftLocked && selectedTeam && (
+      {/* Normal confirm pick modal: assign selected team to the current draft player */}
+      {!adminMode && !draftLocked && selectedTeam && currentTurnPlayer && onPickTeam && (
         <>
           <div
             className="fixed inset-0 z-40 bg-black/60"
@@ -99,52 +123,163 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, assign
             aria-labelledby="assign-modal-title"
           >
             <h2 id="assign-modal-title" className="font-display text-lg text-slate-100 mb-1">
-              Assign team to player
+              Confirm pick
             </h2>
             <p className="font-body text-sm text-amber-200 mb-4">
               <strong>{selectedTeam.seed} {selectedTeam.name}</strong>
-              {assigningPick && <span className="ml-2 text-slate-400">Saving…</span>}
+              <span className="mx-2 text-amber-300">→</span>
+              <strong>{currentTurnPlayer.avatar_emoji} {currentTurnPlayer.name}</strong>
             </p>
-            <ul className="space-y-2 max-h-[60vh] overflow-y-auto">
-              {players.map((p) => {
-                const teamCount = ownership?.filter((o) => String(o.player_id) === String(p.id)).length ?? 0
+            {assigningPick && <p className="mb-2 text-sm text-slate-300">Saving…</p>}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onPickTeam && selectedTeam?.id) onPickTeam(selectedTeam.id)
+                  setSelectedTeamId(null)
+                }}
+                disabled={assigningPick}
+                className="flex-1 rounded-lg bg-amber-600 py-2.5 font-body font-medium text-white hover:bg-amber-500 disabled:opacity-60"
+              >
+                Confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedTeamId(null)}
+                className="flex-1 rounded-lg border border-slate-500 bg-slate-700 py-2.5 font-body text-slate-200 hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Admin assign modal: choose a player, then confirm TEAM -> PLAYER */}
+      {adminMode && selectedTeam && onAdminPickTeam && (
+        <>
+          {/* Keep editing allowed even if draft is locked (adminMode). */}
+          <div
+            className="fixed inset-0 z-40 bg-black/60"
+            aria-hidden
+            onClick={() => {
+              setAdminSelectedPlayerId(null)
+              setSelectedTeamId(null)
+            }}
+          />
+          <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-600 bg-slate-900 shadow-xl p-4" role="dialog" aria-modal="true">
+            {adminSelectedPlayerId ? (
+              (() => {
+                const player = players.find((p) => String(p.id) === String(adminSelectedPlayerId))
                 return (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      onClick={() => assignTeamToPlayer(selectedTeamId, p.id)}
-                      disabled={assigningPick}
-                      className="w-full flex items-center gap-2 rounded-lg border border-slate-600 bg-slate-800 px-4 py-3 text-left font-body text-slate-200 hover:bg-slate-700 active:bg-slate-600 touch-manipulation min-h-[48px] disabled:opacity-60"
-                    >
-                      <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
-                      <span>{p.avatar_emoji} {p.name}</span>
-                      <span className="ml-auto font-body text-xs text-slate-500">{teamCount} teams</span>
-                    </button>
-                  </li>
+                  <>
+                    <h2 className="font-display text-lg text-slate-100 mb-1">Confirm admin pick</h2>
+                    <p className="font-body text-sm text-amber-200 mb-4">
+                      You are about to assign <strong>{selectedTeam.seed} {selectedTeam.name}</strong> to{' '}
+                      <strong>{player?.avatar_emoji} {player?.name}</strong>.
+                    </p>
+                    {assigningPick && <p className="mb-2 text-sm text-slate-300">Saving…</p>}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={assigningPick}
+                        onClick={() => {
+                          if (onAdminPickTeam && selectedTeam?.id && player?.id) {
+                            onAdminPickTeam(selectedTeam.id, player.id)
+                          }
+                          setAdminSelectedPlayerId(null)
+                          setSelectedTeamId(null)
+                        }}
+                        className="flex-1 rounded-lg bg-amber-600 py-2.5 font-body font-medium text-white hover:bg-amber-500 disabled:opacity-60"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAdminSelectedPlayerId(null)}
+                        className="flex-1 rounded-lg border border-slate-500 bg-slate-700 py-2.5 font-body text-slate-200 hover:bg-slate-600"
+                      >
+                        Change player
+                      </button>
+                    </div>
+                  </>
                 )
-              })}
-            </ul>
-            <button
-              type="button"
-              onClick={() => setSelectedTeamId(null)}
-              className="mt-4 w-full rounded-lg border border-slate-500 bg-slate-700 py-2.5 font-body text-slate-200 hover:bg-slate-600"
-            >
-              Cancel
-            </button>
+              })()
+            ) : (
+              <>
+                <h2 className="font-display text-lg text-slate-100 mb-1">Admin assign</h2>
+                <p className="font-body text-sm text-slate-300 mb-4">
+                  Choose a player for <strong>{selectedTeam.seed} {selectedTeam.name}</strong>.
+                </p>
+              {(() => {
+                const owner = selectedTeam ? getTeamOwner(selectedTeam.id) : null
+                if (!owner || !onAdminUnassign) return null
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTeamToUnassign({ team: selectedTeam, owner })
+                      setAdminSelectedPlayerId(null)
+                      setSelectedTeamId(null)
+                    }}
+                    disabled={assigningPick}
+                    className="mb-3 w-full rounded-lg bg-red-600 py-2.5 font-body font-medium text-white hover:bg-red-500 disabled:opacity-60"
+                  >
+                    Unassign this team
+                  </button>
+                )
+              })()}
+                <ul className="space-y-2 max-h-[55vh] overflow-y-auto">
+                  {players.map((p) => {
+                    return (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          onClick={() => setAdminSelectedPlayerId(p.id)}
+                          disabled={assigningPick}
+                          className="w-full flex items-center gap-2 rounded-lg border border-slate-600 bg-slate-800 px-4 py-3 text-left font-body text-slate-200 hover:bg-slate-700 active:bg-slate-600 touch-manipulation min-h-[48px] disabled:opacity-60"
+                        >
+                          <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
+                          <span>
+                            {p.avatar_emoji} {p.name}
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminSelectedPlayerId(null)
+                    setSelectedTeamId(null)
+                  }}
+                  className="mt-4 w-full rounded-lg border border-slate-500 bg-slate-700 py-2.5 font-body text-slate-200 hover:bg-slate-600"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
           </div>
         </>
       )}
 
       {/* Player boxes — view only; tap name to see their drafted teams */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-3 md:gap-4 lg:grid-cols-3">
-        {players.map((p) => {
+        {players.map((p, idx) => {
           const teamCount = ownership?.filter((o) => String(o.player_id) === String(p.id)).length ?? 0
+          const isTurn = currentTurnPlayer && String(currentTurnPlayer.id) === String(p.id)
           return (
             <div
               key={p.id}
-              className="flex min-h-[72px] flex-col justify-center rounded-xl border-2 border-slate-600 bg-slate-800/80 p-4"
+              className={`flex min-h-[72px] flex-col justify-center rounded-xl border-2 border-slate-600 bg-slate-800/80 p-4 ${
+                isTurn ? 'ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-900' : ''
+              }`}
             >
               <div className="flex items-center gap-2">
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-amber-900/40 border border-amber-700 text-xs font-body text-amber-200">
+                  {idx + 1}
+                </span>
                 <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
                 <button
                   type="button"
@@ -157,6 +292,11 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, assign
               <p className="mt-1 font-body text-xs text-slate-400">
                 {teamCount} team{teamCount !== 1 ? 's' : ''} — tap name to view
               </p>
+              {isTurn && (
+                <p className="mt-1 font-body text-xs text-amber-200">
+                  Current pick
+                </p>
+              )}
             </div>
           )
         })}
@@ -185,8 +325,12 @@ export function DraftBoard({ teams, players = [], ownership, draftLocked, assign
                 .map((team) => {
                   const owner = getTeamOwner(team.id)
                   const isSelected = String(selectedTeamId) === String(team.id)
-                  const canAssign = !draftLocked && !owner
-                  const canUnassign = !draftLocked && !!owner && !!onUnassign
+                  const canAssignNormal = !draftLocked && !assigningPick && !owner && !!currentTurnPlayer && !!onPickTeam
+                  const canAssignAdmin = !!adminMode && !assigningPick && !!onAdminPickTeam
+                  const canAssign = canAssignNormal || canAssignAdmin
+                  const canUnassignNormal = !draftLocked && !!owner && !!onUnassign && lastPickedTeamId != null && String(team.id) === String(lastPickedTeamId)
+                  const canUnassignAdmin = !!adminMode && !!owner && !!onAdminUnassign
+                  const canUnassign = canUnassignNormal || canUnassignAdmin
                   const isClickable = canAssign || canUnassign
                   return (
                     <div

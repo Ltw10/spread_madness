@@ -36,6 +36,19 @@ export function useGameConfig(gameId) {
     loadConfig()
   }, [loadConfig])
 
+  // Keep config in sync across admin/player clients.
+  useEffect(() => {
+    if (!supabase || !gameId) return
+    const channel = supabase.channel(`game_config:${gameId}`)
+    channel.on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'sm_game_config', filter: `game_instance_id=eq.${gameId}` },
+      loadConfig
+    )
+    channel.subscribe()
+    return () => { channel.unsubscribe() }
+  }, [gameId, loadConfig])
+
   const setConfigValue = useCallback(async (key, value) => {
     if (!supabase || !gameId) return
     const { error } = await supabase
