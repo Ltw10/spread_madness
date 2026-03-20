@@ -181,8 +181,17 @@ export function AdminPanel({ onLogout }) {
     }
   }
 
-  const inProgressGames = games.filter((g) => g.status === 'in_progress')
-  const scheduledGames = games.filter((g) => g.status === 'scheduled')
+  /** Ready for Admin finalize: live, or scheduled with both scores, or stuck final (scores but no winner). */
+  const finalizeableGames = (games || []).filter((g) => {
+    const s1 = Number(g.team1_score)
+    const s2 = Number(g.team2_score)
+    const hasScores = Number.isFinite(s1) && Number.isFinite(s2)
+    if (!hasScores) return false
+    if (g.status === 'in_progress') return true
+    if (g.status === 'scheduled') return true
+    if (g.status === 'final' && g.winner_team_id == null) return true
+    return false
+  })
 
   return (
     <div className="space-y-6 rounded-xl border border-slate-600 bg-slate-900/90 p-6">
@@ -738,9 +747,19 @@ export function AdminPanel({ onLogout }) {
 
       <section>
         <h3 className="font-body font-medium text-slate-300">Finalize games</h3>
+        <p className="mt-1 font-body text-xs text-slate-500">
+          Applies winner, cover, steals, advancement, and elimination (same as auto-finalize). Use after you fix teams or
+          scores in the database: enter or confirm scores, then <strong className="text-slate-400">Finalize</strong>.
+        </p>
         <div className="mt-2 space-y-2">
-          {inProgressGames.length === 0 && <p className="text-sm text-slate-400">No games in progress.</p>}
-          {inProgressGames.map((g) => (
+          {finalizeableGames.length === 0 && (
+            <p className="text-sm text-slate-400">
+              No games ready to finalize. Needs both scores and status <strong className="text-slate-500">in progress</strong>,{' '}
+              <strong className="text-slate-500">scheduled</strong>, or <strong className="text-slate-500">final</strong>{' '}
+              with winner not set yet.
+            </p>
+          )}
+          {finalizeableGames.map((g) => (
             <div key={g.id} className="flex items-center gap-2">
               <GameMatchup
                 game={g}

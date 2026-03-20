@@ -40,6 +40,16 @@ export function GameMatchup({ game, team1, team2, spreadTeam, owner1, owner2, sc
   // Top-right: LIVE (in progress) or FINAL (completed); scheduled stays empty.
   const statusCornerLabel = isLive ? 'LIVE' : isFinal ? 'FINAL' : null
 
+  const n1 = Number(score1)
+  const n2 = Number(score2)
+  const hasNumericScores = Number.isFinite(n1) && Number.isFinite(n2)
+  const showAdminFinalize =
+    isAdmin &&
+    onFinalize &&
+    (isLive ||
+      (status === 'scheduled' && hasNumericScores) ||
+      (isFinal && hasNumericScores && game?.winner_team_id == null))
+
   return (
     <div
       className={`
@@ -139,7 +149,7 @@ export function GameMatchup({ game, team1, team2, spreadTeam, owner1, owner2, sc
           </span>
         </div>
       </div>
-      {isAdmin && isLive && onFinalize && (
+      {showAdminFinalize && (
         <button
           type="button"
           onClick={() => onFinalize(game)}

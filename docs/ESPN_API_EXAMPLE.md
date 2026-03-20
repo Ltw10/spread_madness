@@ -219,6 +219,44 @@ For **tournament team seeding**, the same event gives us two teams: Howard Bison
 
 ---
 
+## 3. Single game — summary API (manual DB fixes)
+
+**No API key.** Use the ESPN **event id** (same as scoreboard `events[].id`). You can read it from a game URL on ESPN, e.g. `.../game/_/gameId/401825400` → `401825400`.
+
+### Request
+
+```bash
+# Replace EVENT_ID (e.g. 401825400)
+curl -s "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/summary?event=EVENT_ID" | jq .
+```
+
+(`site.web.api.espn.com` with the same path usually works too if you hit CORS or caching issues in a browser.)
+
+### Where to read values for `sm_games` / `sm_teams`
+
+| What you need | JSON path (typical) |
+|---------------|---------------------|
+| Game status | `header.competitions[0].status.type.name` (e.g. `STATUS_FINAL`) |
+| Per-team ESPN id | `header.competitions[0].competitors[].id` → match `sm_teams.espn_id` |
+| Scores | `header.competitions[0].competitors[].score` (strings → integers in DB) |
+| Winner | `header.competitions[0].competitors[].winner` (`true` on one side) |
+| Spread (close line) | `pickcenter[0].pointSpread.home.close.line` and `.away.close.line` |
+| Who is favored | `pickcenter[0].homeTeamOdds.favorite` / `awayTeamOdds.favorite` |
+
+The app stores **`spread`** as the **favorite’s** closing line (negative number) and **`spread_team_id`** as the internal UUID of the favored team whose `espn_id` matches the favorite side (`homeTeamOdds` / `awayTeamOdds` tie to home/away competitors by `homeAway`).
+
+### If `pickcenter` is empty
+
+Use the **tournament scoreboard** for that game day (includes `competitions[0].odds[0]` like §Spread above):
+
+```bash
+curl -s "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?groups=100&limit=500&dates=YYYYMMDD" | jq '.events[] | select(.id=="EVENT_ID")'
+```
+
+Swap `YYYYMMDD` for the game’s local tournament day and `EVENT_ID` for the same id.
+
+---
+
 ## Status values (for auto-finalize)
 
 We treat a game as **final** when `event.status.type.name` (or equivalent) indicates completion. Typical values:
