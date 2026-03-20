@@ -58,7 +58,17 @@ export async function runScoreSyncOnce(client, currentGames, reloadGames) {
 
     let updated = 0
     for (const game of currentGames) {
-      if (game.status === 'final') continue
+      // Repair stuck finals: marked final but winner/advance/elim never applied (see gameFinalize.js)
+      if (game.status === 'final') {
+        const t1 = game.team1_score
+        const t2 = game.team2_score
+        if (game.winner_team_id == null && Number.isFinite(Number(t1)) && Number.isFinite(Number(t2))) {
+          await finalizeGame(client, game, Number(t1), Number(t2))
+          updated++
+          if (reloadGames) reloadGames()
+        }
+        continue
+      }
       const matched = matchGameToEspnEvent(game, espnGames)
       if (!matched) continue
 

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchSmGamesWithTeams } from '../lib/gameFinalize'
 
 export function useGames() {
   const [games, setGames] = useState([])
@@ -16,20 +17,7 @@ export function useGames() {
     setLoading(true)
     setError(null)
     try {
-      const { data, error: e } = await supabase
-        .from('sm_games')
-        .select(`
-          *,
-          team1:sm_teams!sm_games_team1_id_fkey(id, name, seed, region, espn_id, is_eliminated),
-          team2:sm_teams!sm_games_team2_id_fkey(id, name, seed, region, espn_id, is_eliminated),
-          spread_team:sm_teams!sm_games_spread_team_id_fkey(id, name),
-          winner_team:sm_teams!sm_games_winner_team_id_fkey(id, name),
-          cover_team:sm_teams!sm_games_cover_team_id_fkey(id, name)
-        `)
-        .order('round')
-        .order('region')
-      if (e) throw e
-      const list = data || []
+      const list = await fetchSmGamesWithTeams(supabase)
       console.log('[bracket] useGames load: ok, games count =', list.length)
       setGames(list)
     } catch (err) {

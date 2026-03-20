@@ -11,7 +11,7 @@ import { usePlayers } from '../hooks/usePlayers'
 export function BracketPage() {
   const { games, loading: gamesLoading, reload: reloadGames } = useGames()
   useCreateBracketWhenEmpty(games, reloadGames)
-  const { ownership, getOwnerByTeamId } = useOwnership()
+  const { ownership, getDraftOwnerByTeamId, getOwnerAtBracketRoundStart, getOwnerByTeamId } = useOwnership()
   const { players, loading: playersLoading } = usePlayers()
   const { scores } = useScores(false)
   const hasOwnership = ownership?.length > 0
@@ -29,24 +29,34 @@ export function BracketPage() {
     return map
   }, [scores])
 
-  const ownedTeamIds = useMemo(() => {
-    if (!playerFilterId || playerFilterId === 'all') return null
-    const id = String(playerFilterId)
-    const set = new Set()
-    for (const o of ownership || []) {
-      if (String(o.player_id) === id && o.team_id) set.add(String(o.team_id))
-    }
-    return set
-  }, [ownership, playerFilterId])
-
+  /**
+   * Same ownership as the bracket card for that round: R64 = draft owner; later rounds = owner at start of that round.
+   * So Round of 32 only shows games where the player held team1 or team2 entering that round (not teams stolen earlier).
+   */
   const gamesToShow = useMemo(() => {
-    if (!ownedTeamIds) return games
+    if (!playerFilterId || playerFilterId === 'all') return games
+    const pid = String(playerFilterId)
     return (games || []).filter((g) => {
+      const r = Number(g.round)
       const t1 = g.team1_id ?? g.team1?.id ?? null
       const t2 = g.team2_id ?? g.team2?.id ?? null
-      return (t1 && ownedTeamIds.has(String(t1))) || (t2 && ownedTeamIds.has(String(t2)))
+      const ownerForTeamThisRound = (teamId) => {
+        if (teamId == null) return null
+        if (r === 1) return getDraftOwnerByTeamId(teamId) ?? getOwnerByTeamId(teamId)
+        if (r >= 2) return getOwnerAtBracketRoundStart(teamId, r) ?? getOwnerByTeamId(teamId)
+        return getOwnerByTeamId(teamId)
+      }
+      const o1 = ownerForTeamThisRound(t1)
+      const o2 = ownerForTeamThisRound(t2)
+      return (o1 && String(o1.id) === pid) || (o2 && String(o2.id) === pid)
     })
-  }, [games, ownedTeamIds])
+  }, [
+    games,
+    playerFilterId,
+    getDraftOwnerByTeamId,
+    getOwnerAtBracketRoundStart,
+    getOwnerByTeamId,
+  ])
 
   return (
     <div className="flex min-h-screen flex-col gap-4 p-4 md:flex-row md:gap-6 md:p-6">
@@ -59,31 +69,37 @@ export function BracketPage() {
           </p>
         )}
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <label className="font-body text-sm text-slate-300" htmlFor="player-filter">
-            Filter player:
-          </label>
-          <select
-            id="player-filter"
-            value={playerFilterId}
-            onChange={(e) => setPlayerFilterId(e.target.value)}
-            disabled={playersLoading || !players?.length}
-            className="rounded border border-slate-600 bg-slate-900/40 px-3 py-2 font-body text-slate-200 disabled:opacity-60"
-          >
-            <option value="all">All players</option>
-            {(players || []).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.avatar_emoji} {p.name}
-              </option>
-            ))}
-          </select>
+        <div className="mt-4 space-y-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="font-body text-sm text-slate-300" htmlFor="player-filter">
+              Filter player:
+            </label>
+            <select
+              id="player-filter"
+              value={playerFilterId}
+              onChange={(e) => setPlayerFilterId(e.target.value)}
+              disabled={playersLoading || !players?.length}
+              className="rounded border border-slate-600 bg-slate-900/40 px-3 py-2 font-body text-slate-200 disabled:opacity-60"
+            >
+              <option value="all">All players</option>
+              {(players || []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.avatar_emoji} {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="font-body text-xs text-slate-500">
+            Each round only lists games where they owned either team <strong className="font-medium text-slate-400">for that round</strong>{' '}
+            (same as the names on the cards).
+          </p>
         </div>
 
         <div className="mt-6">
           <Bracket
             games={gamesToShow}
+            gamesForOrdering={games}
             scoresByEspnId={scoresByEspnId}
-            getOwnerByTeamId={getOwnerByTeamId}
             headerExtra={
               <button
                 type="button"

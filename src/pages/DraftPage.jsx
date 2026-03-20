@@ -7,16 +7,8 @@ import { useOwnership } from '../hooks/useOwnership'
 import { supabase } from '../lib/supabase'
 import { verifyPassword } from '../lib/passwordHash'
 
-/** Snake: asc = 1→N by slot index, desc = N→1. After last of asc, same player (N) picks first in desc. */
-function advanceDraftTurn(phase, index, n) {
-  if (n <= 1) return { phase: 'asc', index: 0 }
-  if (phase === 'asc') {
-    if (index < n - 1) return { phase: 'asc', index: index + 1 }
-    return { phase: 'desc', index: n - 1 }
-  }
-  if (index > 0) return { phase: 'desc', index: index - 1 }
-  return { phase: 'asc', index: 0 }
-}
+// Classic snake draft: determine who is picking from fixed order + pick count.
+// Direction only controls whether the first slot is low->high (1->N) or high->low (N->1).
 
 export function DraftPage() {
   const { currentGameId } = useGame()
@@ -44,8 +36,10 @@ export function DraftPage() {
   const draftLocked = config.draft_locked === 'true'
 
   const draftOwnership = useMemo(() => {
-    // Only count ownership created during the draft (acquired_round = 1).
-    return (ownership || []).filter((o) => o.acquired_round === 1)
+    // Draft picks only (R64 steals also use acquired_round = 1 but set transferred_from).
+    return (ownership || []).filter(
+      (o) => o.acquired_round === 1 && o.transferred_from_player_id == null
+    )
   }, [ownership])
 
   /** Display ownership for the draft screen (draft-stage only). */
@@ -80,43 +74,18 @@ export function DraftPage() {
 
   const draftPickCount = displayOwnership.length
 
-  const computedTurnPlayer = useMemo(() => {
+  const currentTurnPlayer = useMemo(() => {
     const n = playersOrdered.length
     if (!n) return null
+
+    const direction = config?.draft_direction
+    const baseOrder = direction === 'high_to_low' ? [...playersOrdered].reverse() : playersOrdered
 
     const roundIndex = Math.floor(draftPickCount / n) // 0 = round 1
     const posInRound = draftPickCount % n
-
-    // `draft_direction` is interpreted relative to the round where the admin set it.
-    // This avoids surprising jumps if direction is changed mid-draft.
-    const direction = config?.draft_direction
-    const anchorRoundRaw = config?.draft_direction_anchor_round
-    const anchorRound = Number.isFinite(Number(anchorRoundRaw)) ? Number(anchorRoundRaw) : 0
-
-    const directionIsAscending = direction !== 'high_to_low' // low_to_high => ascending
-    const diffParity = ((roundIndex - anchorRound) % 2 + 2) % 2
-    const ascendingWanted = diffParity === 0 ? directionIsAscending : !directionIsAscending
-
-    const idx = ascendingWanted ? posInRound : (n - 1 - posInRound)
-    return playersOrdered[idx] ?? null
-  }, [playersOrdered, draftPickCount, config?.draft_direction, config?.draft_direction_anchor_round])
-
-  const explicitPhase = config?.draft_turn_phase
-  const explicitIndexParsed = parseInt(String(config?.draft_turn_index ?? ''), 10)
-
-  const turnFromExplicitState = useMemo(() => {
-    const n = playersOrdered.length
-    if (!n) return null
-    if (explicitPhase !== 'asc' && explicitPhase !== 'desc') return null
-    if (!Number.isFinite(explicitIndexParsed) || explicitIndexParsed < 0 || explicitIndexParsed >= n) return null
-    return playersOrdered[explicitIndexParsed] ?? null
-  }, [playersOrdered, explicitPhase, explicitIndexParsed])
-
-  // Admin-set turn + direction (persisted). Otherwise classic snake from pick count.
-  const currentTurnPlayer = turnFromExplicitState ?? computedTurnPlayer
-
-  const adminPickSelectValue =
-    turnFromExplicitState?.id != null ? String(turnFromExplicitState.id) : ''
+    const idx = roundIndex % 2 === 0 ? posInRound : (n - 1 - posInRound)
+    return baseOrder[idx] ?? null
+  }, [playersOrdered, draftPickCount, config?.draft_direction])
 
   const lastPickedTeamId = useMemo(() => {
     if (!displayOwnership?.length) return null
@@ -142,14 +111,6 @@ export function DraftPage() {
         is_active: true,
       })
       await reloadOwnership()
-      const n = playersOrdered.length
-      if (n > 0 && (config?.draft_turn_phase === 'asc' || config?.draft_turn_phase === 'desc')) {
-        const idx = parseInt(String(config?.draft_turn_index ?? '0'), 10)
-        const next = advanceDraftTurn(config.draft_turn_phase, Number.isFinite(idx) ? idx : 0, n)
-        await setConfigValue('draft_turn_phase', next.phase)
-        await setConfigValue('draft_turn_index', String(next.index))
-      }
-      await setConfigValue('draft_current_player_id', '')
     } catch (err) {
       setAddError(err?.message || 'Failed to save pick.')
     } finally {
@@ -191,7 +152,6 @@ export function DraftPage() {
         is_active: true,
       })
       await reloadOwnership()
-      await setConfigValue('draft_current_player_id', '')
     } catch (err) {
       setAddError(err?.message || 'Failed to save admin pick.')
     } finally {
@@ -226,45 +186,12 @@ export function DraftPage() {
     }
   }
 
-  const setCurrentPickOverride = async (playerIdOrNull) => {
-    if (!currentGameId) return
-    setAddError('')
-    try {
-      if (!playerIdOrNull) {
-        await setConfigValue('draft_turn_phase', '')
-        await setConfigValue('draft_turn_index', '')
-        await setConfigValue('draft_current_player_id', '')
-        return
-      }
-      const idx = playersOrdered.findIndex((p) => String(p.id) === String(playerIdOrNull))
-      if (idx < 0) return
-      const dir = config?.draft_direction === 'high_to_low' ? 'high_to_low' : 'low_to_high'
-      const phase = dir === 'low_to_high' ? 'asc' : 'desc'
-      await setConfigValue('draft_direction', dir)
-      await setConfigValue('draft_turn_phase', phase)
-      await setConfigValue('draft_turn_index', String(idx))
-      await setConfigValue('draft_current_player_id', '')
-    } catch (err) {
-      setAddError(err?.message || 'Failed to set current pick override.')
-    }
-  }
-
   const setDraftDirection = async (direction) => {
     if (!currentGameId) return
     setAddError('')
     const v = direction === 'high_to_low' ? 'high_to_low' : 'low_to_high'
     try {
       await setConfigValue('draft_direction', v)
-      const phase = config?.draft_turn_phase
-      const idx = parseInt(String(config?.draft_turn_index ?? ''), 10)
-      const n = playersOrdered.length
-      if ((phase === 'asc' || phase === 'desc') && n > 0 && Number.isFinite(idx) && idx >= 0 && idx < n) {
-        const newPhase = v === 'low_to_high' ? 'asc' : 'desc'
-        await setConfigValue('draft_turn_phase', newPhase)
-      } else {
-        const anchorRoundIndex = Math.floor(draftPickCount / (n || 1))
-        await setConfigValue('draft_direction_anchor_round', String(anchorRoundIndex))
-      }
     } catch (err) {
       setAddError(err?.message || 'Failed to set draft direction.')
     }
@@ -353,35 +280,13 @@ export function DraftPage() {
 
       {adminMode && playersOrdered?.length > 0 && (
         <div className="mt-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="font-body text-sm text-slate-300">Current pick player:</span>
-            <select
-              value={adminPickSelectValue}
-              onChange={(e) => setCurrentPickOverride(e.target.value || null)}
-              className="rounded border border-slate-600 bg-slate-900/40 px-3 py-2 font-body text-slate-200"
-            >
-              <option value="">Auto (snake)</option>
-              {playersOrdered.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.avatar_emoji} {p.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setCurrentPickOverride(null)}
-              className="rounded bg-slate-700 px-3 py-2 font-body text-sm text-slate-200 hover:bg-slate-600 touch-manipulation"
-            >
-              Clear
-            </button>
-          </div>
-
           <div className="mt-3 flex items-center gap-3 flex-wrap">
             <span className="font-body text-sm text-slate-300">Draft direction:</span>
             <select
               value={config?.draft_direction === 'high_to_low' ? 'high_to_low' : 'low_to_high'}
               onChange={(e) => setDraftDirection(e.target.value)}
               className="rounded border border-slate-600 bg-slate-900/40 px-3 py-2 font-body text-slate-200"
+              disabled={draftLocked}
             >
               <option value="low_to_high">Low to high (1 -> N)</option>
               <option value="high_to_low">High to low (N -> 1)</option>

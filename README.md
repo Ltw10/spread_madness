@@ -75,11 +75,13 @@ Open the URL shown (e.g. `http://localhost:5173/` or `http://localhost:5173/spre
    - Drag each team from the region lists onto a player. You can use **Revert last move** to undo.
    - When every team is assigned, click **Submit Draft**. This saves ownership and locks the draft.
 
-3. **Bracket** — Return to **Bracket**. You’ll see matchups by round and region. Each game shows the spread (and, after the draft, which player owns each team). Live scores update about every 60 seconds while the app is open.
+3. **Bracket** — Return to **Bracket**. You’ll see matchups by round and region. Each game shows the spread (and, after the draft, which player owns each team). **Round of 64** shows **original draft** owners. **Each later round** shows owners as of the **start of that round** (all steals from **earlier** rounds are reflected; steals in **later** rounds do not change earlier columns). Live scores update about every 60 seconds while the app is open.
 
 4. **Admin** (if you have access):
    - **Create Bracket** — If the bracket is empty but you have teams, this creates the full 63-game bracket. The app can also auto-create the bracket when you have 32+ teams and no games.
    - **Finalize** — When a game is finished, use Finalize on that matchup so the winner advances and ownership updates (including steals when the underdog covers).
+   - **Quick refinalize all finals** — Re-runs cover/winner math on current ownership (good after a spread-logic fix). Does **not** undo mistaken steals.
+   - **Full replay from draft** — Rebuilds rosters from draft history, wipes this pool’s transfers, resets shared bracket state (`sm_teams` elimination, empty round 2+ slots, clear winner/cover on all games), then replays every final in order. Use to fix wrong steals; affects all pools sharing the same Supabase bracket.
    - **Reset for new game** — Clears ownership, transfer history, and unlocks the draft so you can run a new draft. Leaves the bracket (games and spreads) intact.
 
 **Flow in short:** Add players → assign all teams on Draft → Submit Draft → use Bracket to follow games and spreads; use Admin to finalize games and (optionally) reset for another season.

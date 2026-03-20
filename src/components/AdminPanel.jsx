@@ -9,12 +9,29 @@ import { GameMatchup } from './GameMatchup'
 import { usePlayers } from '../hooks/usePlayers'
 
 export function AdminPanel({ onLogout }) {
-  const { config, setConfigValue, finalizeGame, createBracket, resetForNewGame, error: adminError } = useAdmin()
+  const {
+    config,
+    setConfigValue,
+    finalizeGame,
+    refinalizeAllFinalGames,
+    replayFinalsFromDraftBaseline,
+    createBracket,
+    resetForNewGame,
+    error: adminError,
+  } = useAdmin()
   const { games, reload: reloadGames } = useGames()
   const { currentGameId, games: gameInstances, renameGame, updateGamePassword } = useGame()
   const { players, loading: playersLoading } = usePlayers()
   const [syncResult, setSyncResult] = useState(null)
   const [syncing, setSyncing] = useState(false)
+  const [clearScoresConfirm, setClearScoresConfirm] = useState(false)
+  const [clearingScores, setClearingScores] = useState(false)
+  const [refinalizeConfirm, setRefinalizeConfirm] = useState(false)
+  const [refinalizing, setRefinalizing] = useState(false)
+  const [refinalizeResult, setRefinalizeResult] = useState(null)
+  const [replayDraftConfirm, setReplayDraftConfirm] = useState(false)
+  const [replayDrafting, setReplayDrafting] = useState(false)
+  const [replayDraftResult, setReplayDraftResult] = useState(null)
   const [bracketResult, setBracketResult] = useState(null)
   const [finalizeModal, setFinalizeModal] = useState(null)
   const [overrideScores, setOverrideScores] = useState({ team1: '', team2: '' })
@@ -72,6 +89,7 @@ export function AdminPanel({ onLogout }) {
           .select('id', { count: 'exact', head: true })
           .eq('game_instance_id', currentGameId)
           .eq('acquired_round', 1)
+          .is('transferred_from_player_id', null)
           .eq('is_active', true)
         if (cancelled) return
         setDraftHasPicks((count || 0) > 0)
@@ -226,9 +244,223 @@ export function AdminPanel({ onLogout }) {
         >
           {syncing ? 'Refreshing…' : 'Refresh scores now'}
         </button>
+
+        {!clearScoresConfirm ? (
+          <button
+            type="button"
+            disabled={syncing || clearingScores || !games?.length}
+            onClick={() => {
+              setSyncResult(null)
+              setClearScoresConfirm(true)
+            }}
+            className="mt-2 rounded border border-amber-600/60 bg-amber-900/30 px-3 py-2 text-sm text-amber-200 hover:bg-amber-800/40 disabled:opacity-60"
+          >
+            Clear non-final scores and repull from ESPN…
+          </button>
+        ) : (
+          <div className="mt-2 space-y-2">
+            <p className="text-xs text-slate-400">
+              This will clear scores for games that are not final, then immediately refetch from ESPN. Final games are left untouched to avoid re-finalizing and duplicating transfer events.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={syncing || clearingScores}
+                onClick={async () => {
+                  setClearingScores(true)
+                  setSyncResult(null)
+                  try {
+                    const { error: clearErr } = await supabase
+                      .from('sm_games')
+                      .update({
+                        team1_score: null,
+                        team2_score: null,
+                        winner_team_id: null,
+                        cover_team_id: null,
+                        status: 'scheduled',
+                        updated_at: new Date().toISOString(),
+                      })
+                      .neq('status', 'final')
+                    if (clearErr) throw clearErr
+
+                    const { data: freshGames, error: freshErr } = await supabase
+                      .from('sm_games')
+                      .select(`
+                        *,
+                        team1:sm_teams!sm_games_team1_id_fkey(id, name, seed, region, espn_id, is_eliminated),
+                        team2:sm_teams!sm_games_team2_id_fkey(id, name, seed, region, espn_id, is_eliminated),
+                        spread_team:sm_teams!sm_games_spread_team_id_fkey(id, name),
+                        winner_team:sm_teams!sm_games_winner_team_id_fkey(id, name),
+                        cover_team:sm_teams!sm_games_cover_team_id_fkey(id, name)
+                      `)
+                      .order('round')
+                      .order('region')
+                    if (freshErr) throw freshErr
+                    const result = await runScoreSyncOnce(supabase, freshGames || [], reloadGames)
+                    setSyncResult(result.error ? { error: result.error } : { updated: result.updated ?? 0 })
+                  } catch (e) {
+                    setSyncResult({ error: e?.message || 'Failed' })
+                  } finally {
+                    setClearingScores(false)
+                    setClearScoresConfirm(false)
+                  }
+                }}
+                className="rounded bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-500 disabled:opacity-60"
+              >
+                {clearingScores ? 'Clearing…' : 'Yes, clear + repull'}
+              </button>
+              <button
+                type="button"
+                disabled={clearingScores}
+                onClick={() => setClearScoresConfirm(false)}
+                className="rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {syncResult && (
           <p className="mt-2 text-sm text-slate-400">
             {syncResult.error ? <span className="text-red-400">{syncResult.error}</span> : `Updated ${syncResult.updated ?? 0} game(s).`}
+          </p>
+        )}
+
+        <p className="mt-3 text-xs text-slate-500">
+          <strong className="text-slate-400">Quick refinalize</strong> only reapplies math on top of current ownership. It skips steals that already look correct, so it{' '}
+          <strong className="text-slate-400">cannot undo a wrong steal</strong>. Use <strong className="text-slate-400">full replay from draft</strong> to wipe steals,
+          restore post-draft rosters from history, reset the shared bracket, and simulate every final again.
+        </p>
+
+        {!refinalizeConfirm ? (
+          <button
+            type="button"
+            disabled={syncing || clearingScores || refinalizing || replayDrafting || replayDraftConfirm || !games?.length}
+            onClick={() => {
+              setRefinalizeResult(null)
+              setRefinalizeConfirm(true)
+            }}
+            className="mt-2 block rounded border border-violet-600/60 bg-violet-900/30 px-3 py-2 text-sm text-violet-200 hover:bg-violet-800/40 disabled:opacity-60"
+          >
+            Quick refinalize all final games…
+          </button>
+        ) : (
+          <div className="mt-2 space-y-2 rounded-lg border border-violet-600/40 bg-violet-950/40 p-3">
+            <p className="text-xs text-slate-400">
+              Recomputes winner/cover from scores + spread for each <strong className="text-slate-300">final</strong> game in bracket order. Fills missing steals only;
+              does not revert mistaken transfers.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={refinalizing}
+                onClick={async () => {
+                  setRefinalizing(true)
+                  setRefinalizeResult(null)
+                  try {
+                    const result = await refinalizeAllFinalGames(games)
+                    await reloadGames()
+                    setRefinalizeResult(result)
+                  } catch (e) {
+                    setRefinalizeResult({ processed: 0, errors: [e?.message || String(e)], total: 0 })
+                  } finally {
+                    setRefinalizing(false)
+                    setRefinalizeConfirm(false)
+                  }
+                }}
+                className="rounded bg-violet-600 px-3 py-2 text-sm text-white hover:bg-violet-500 disabled:opacity-60"
+              >
+                {refinalizing ? 'Re-running…' : 'Yes, quick refinalize'}
+              </button>
+              <button
+                type="button"
+                disabled={refinalizing}
+                onClick={() => setRefinalizeConfirm(false)}
+                className="rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {refinalizeResult && (
+          <p className="mt-2 text-sm text-slate-400">
+            Refinalized {refinalizeResult.processed} / {refinalizeResult.total} final game(s).
+            {refinalizeResult.errors?.length > 0 && (
+              <span className="mt-1 block text-red-400">{refinalizeResult.errors.join('; ')}</span>
+            )}
+          </p>
+        )}
+
+        {!replayDraftConfirm ? (
+          <button
+            type="button"
+            disabled={syncing || clearingScores || refinalizing || refinalizeConfirm || replayDrafting || !games?.length}
+            onClick={() => {
+              setReplayDraftResult(null)
+              setReplayDraftConfirm(true)
+            }}
+            className="mt-3 block rounded border border-rose-600/60 bg-rose-950/40 px-3 py-2 text-sm text-rose-200 hover:bg-rose-900/50 disabled:opacity-60"
+          >
+            Full replay from draft (undo steals, re-simulate finals)…
+          </button>
+        ) : (
+          <div className="mt-3 space-y-2 rounded-lg border border-rose-600/50 bg-rose-950/30 p-3">
+            <p className="text-xs text-rose-200/95">
+              This <strong>deletes all ownership and transfer events</strong> for this pool, then rebuilds rosters from every{' '}
+              <code className="text-rose-100">acquired_round = 1</code> pick (latest pick per team wins). It clears{' '}
+              <strong>all</strong> teams’ <code className="text-rose-100">is_eliminated</code>, clears winner/cover on every game, and empties round &gt; 1 matchup slots,
+              then replays finals in order using current scores. <strong>Other pools on the same Supabase project share sm_teams and sm_games</strong> — they will see the same
+              bracket and eliminations.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={replayDrafting}
+                onClick={async () => {
+                  setReplayDrafting(true)
+                  setReplayDraftResult(null)
+                  try {
+                    const result = await replayFinalsFromDraftBaseline()
+                    await reloadGames()
+                    setReplayDraftResult(result)
+                  } catch (e) {
+                    setReplayDraftResult({ ok: false, error: e?.message || String(e) })
+                  } finally {
+                    setReplayDrafting(false)
+                    setReplayDraftConfirm(false)
+                  }
+                }}
+                className="rounded bg-rose-600 px-3 py-2 text-sm text-white hover:bg-rose-500 disabled:opacity-60"
+              >
+                {replayDrafting ? 'Replaying…' : 'Yes, full replay'}
+              </button>
+              <button
+                type="button"
+                disabled={replayDrafting}
+                onClick={() => setReplayDraftConfirm(false)}
+                className="rounded bg-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-500 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {replayDraftResult && (
+          <p className="mt-2 text-sm text-slate-400">
+            {replayDraftResult.ok === false ? (
+              <span className="text-red-400">{replayDraftResult.error}</span>
+            ) : (
+              <>
+                Full replay: {replayDraftResult.processed} / {replayDraftResult.total} final game(s). Restored {replayDraftResult.draftTeamsRestored} draft team assignments.
+                {replayDraftResult.errors?.length > 0 && (
+                  <span className="mt-1 block text-red-400">{replayDraftResult.errors.join('; ')}</span>
+                )}
+              </>
+            )}
           </p>
         )}
       </section>

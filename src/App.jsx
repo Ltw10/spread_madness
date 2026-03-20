@@ -9,6 +9,7 @@ import { PlayerModalProvider, usePlayerModal } from './context/PlayerModalContex
 import { useGames } from './hooks/useGames'
 import { useAutoScoreSync } from './hooks/useAutoScoreSync'
 import { useSeedTeamsIfEmpty } from './hooks/useSeedTeamsIfEmpty'
+import { OwnershipProvider } from './hooks/useOwnership'
 
 function Nav() {
   const { currentGameId, setCurrentGameId, games } = useGame()
@@ -84,7 +85,7 @@ function AppContentWithGame() {
       {!currentGameId ? (
         <GameSelectPage />
       ) : (
-        <>
+        <OwnershipProvider gameInstanceId={currentGameId}>
           <ScoreSyncRunner />
           <Nav />
           <Routes>
@@ -92,9 +93,9 @@ function AppContentWithGame() {
             <Route path="/draft" element={<DraftPage />} />
             <Route path="/admin" element={<AdminPage />} />
           </Routes>
-        </>
+          {selectedPlayer && <PlayerCard />}
+        </OwnershipProvider>
       )}
-      {selectedPlayer && <PlayerCard />}
     </div>
   )
 }

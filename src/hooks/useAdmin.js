@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useGame } from '../context/GameContext'
-import { finalizeGame as finalizeGameInDb } from '../lib/gameFinalize'
+import {
+  finalizeGame as finalizeGameInDb,
+  refinalizeAllFinalGames as refinalizeAllFinalGamesInDb,
+  replayFinalsFromDraftBaseline as replayFinalsFromDraftBaselineInDb,
+} from '../lib/gameFinalize'
 import { createBracket as createBracketLib } from '../lib/createBracket'
 
 export function useAdmin() {
@@ -60,6 +64,21 @@ export function useAdmin() {
     return createBracketLib(supabase)
   }
 
+  /** Re-run finalize effects for every `final` game (round order). Pass current `games` from useGames. */
+  async function refinalizeAllFinalGames(games) {
+    if (!supabase) return { processed: 0, errors: ['Supabase not configured'], total: 0 }
+    return refinalizeAllFinalGamesInDb(supabase, games)
+  }
+
+  /**
+   * Wipe steals for this pool, restore draft ownership, reset eliminations and round > 1 bracket slots,
+   * then replay all finals. Affects shared sm_teams / sm_games for every pool on the DB.
+   */
+  async function replayFinalsFromDraftBaseline() {
+    if (!supabase || !currentGameId) return { ok: false, error: 'Supabase not configured or no game selected' }
+    return replayFinalsFromDraftBaselineInDb(supabase, currentGameId)
+  }
+
   /**
    * Erase this game's draft and run data so you can set up a fresh draft.
    * Clears: this game's ownership, transfer_events; optionally this game's players.
@@ -94,6 +113,8 @@ export function useAdmin() {
     reload: loadConfig,
     setConfigValue,
     finalizeGame,
+    refinalizeAllFinalGames,
+    replayFinalsFromDraftBaseline,
     createBracket,
     resetForNewGame,
   }

@@ -48,10 +48,76 @@ const ROUND1_ORDER_KEY = (s1, s2) => {
   return idx >= 0 ? idx : 999
 }
 
-export function Bracket({ games, scoresByEspnId, getOwnerByTeamId, headerExtra }) {
+/**
+ * Bracket slot order for any round: min tree key among feeder games (`next_game_id` chain).
+ * R64 leaves use region×10 + ROUND1_ORDER slot; later rounds take min(feeders) so order matches winners “down the line”.
+ */
+function regionOrderIndex(region) {
+  const i = REGIONS.indexOf(region || '')
+  return i >= 0 ? i : 999
+}
+
+/**
+ * R64 leaf key: region slot + seed-pair order so later rounds compare across regions correctly
+ * (e.g. Final Four East/West game sorts before South/Midwest).
+ */
+function roundOneTreeKey(game) {
+  return regionOrderIndex(game.region) * 10 + ROUND1_ORDER_KEY(game.team1?.seed, game.team2?.seed)
+}
+
+function makeBracketTreeOrderKey(orderSource) {
+  const keyMemo = new Map()
+
+  function bracketTreeOrderKey(game) {
+    if (game?.id == null) return 999
+    const id = String(game.id)
+    if (keyMemo.has(id)) return keyMemo.get(id)
+    const r = Number(game.round)
+    if (r === 1) {
+      const k = roundOneTreeKey(game)
+      keyMemo.set(id, k)
+      return k
+    }
+    const feeders = (orderSource || []).filter(
+      (g) => g.next_game_id != null && String(g.next_game_id) === id
+    )
+    if (feeders.length === 0) {
+      const k = game.team1?.seed ?? game.team2?.seed ?? 999
+      keyMemo.set(id, k)
+      return k
+    }
+    let minK = 999
+    for (const f of feeders) {
+      const k = bracketTreeOrderKey(f)
+      if (k < minK) minK = k
+    }
+    keyMemo.set(id, minK)
+    return minK
+  }
+
+  return bracketTreeOrderKey
+}
+
+function sortByBracketTree(list, bracketTreeOrderKey) {
+  list.sort((a, b) => {
+    const ka = bracketTreeOrderKey(a)
+    const kb = bracketTreeOrderKey(b)
+    if (ka !== kb) return ka - kb
+    return String(a.id).localeCompare(String(b.id))
+  })
+}
+
+/**
+ * @param {object[]} games - Matchups to render (may be filtered).
+ * @param {object[]} [gamesForOrdering] - Full bracket for tree ordering (`next_game_id`); defaults to `games`.
+ */
+export function Bracket({ games, scoresByEspnId, headerExtra, gamesForOrdering }) {
   const [selectedRound, setSelectedRound] = useState(() => getCurrentRoundNumber())
+  const orderSource = gamesForOrdering ?? games
 
   const byRegionThenRound = useMemo(() => {
+    const bracketTreeOrderKey = makeBracketTreeOrderKey(orderSource)
+
     const regionMap = { East: {}, West: {}, South: {}, Midwest: {}, Finals: {} }
     ;(games || []).forEach((g) => {
       const bucket = g.round >= 5 ? 'Finals' : (g.region || '')
@@ -65,21 +131,17 @@ export function Bracket({ games, scoresByEspnId, getOwnerByTeamId, headerExtra }
       if (!roundMap) return
       Object.keys(roundMap).forEach((roundNum) => {
         const list = roundMap[roundNum]
-        const round = Number(roundNum)
-        if (round === 1) {
-          list.sort((a, b) => ROUND1_ORDER_KEY(a.team1?.seed, a.team2?.seed) - ROUND1_ORDER_KEY(b.team1?.seed, b.team2?.seed))
-        } else {
-          list.sort((a, b) => (a.team1?.seed ?? 0) - (b.team1?.seed ?? 0))
-        }
+        sortByBracketTree(list, bracketTreeOrderKey)
       })
     })
     if (regionMap.Finals) {
-      Object.keys(regionMap.Finals).forEach((round) =>
-        regionMap.Finals[round].sort((a, b) => (a.region || '').localeCompare(b.region || ''))
-      )
+      Object.keys(regionMap.Finals).forEach((roundNum) => {
+        const list = regionMap.Finals[roundNum]
+        sortByBracketTree(list, bracketTreeOrderKey)
+      })
     }
     return regionMap
-  }, [games])
+  }, [games, orderSource])
 
   useEffect(() => {
     const total = (games || []).length
@@ -102,8 +164,6 @@ export function Bracket({ games, scoresByEspnId, getOwnerByTeamId, headerExtra }
     const team2 = game.team2
     const score1 = game.team1_score ?? (team1?.espn_id && scoresByEspnId?.[team1.espn_id]) ?? null
     const score2 = game.team2_score ?? (team2?.espn_id && scoresByEspnId?.[team2.espn_id]) ?? null
-    const owner1 = getOwnerByTeamId && team1 ? getOwnerByTeamId(team1.id) : null
-    const owner2 = getOwnerByTeamId && team2 ? getOwnerByTeamId(team2.id) : null
     return (
       <GameMatchup
         key={game.id}
@@ -111,8 +171,6 @@ export function Bracket({ games, scoresByEspnId, getOwnerByTeamId, headerExtra }
         team1={team1}
         team2={team2}
         spreadTeam={game.spread_team}
-        owner1={owner1}
-        owner2={owner2}
         score1={score1}
         score2={score2}
         status={game.status}
@@ -146,6 +204,10 @@ export function Bracket({ games, scoresByEspnId, getOwnerByTeamId, headerExtra }
           </button>
         ))}
       </div>
+      <p className="font-body text-xs text-slate-500">
+        <span className="font-bold text-slate-400">Final</span> games: winner’s name and score are bold;{' '}
+        <span className="text-amber-400">✓</span> = covered the spread (push = no check).
+      </p>
       {headerExtra}
 
       {/* One row per round (1–4): each row has 4 region containers */}

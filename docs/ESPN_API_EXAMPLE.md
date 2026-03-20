@@ -157,7 +157,9 @@ The scoreboard response can include **DraftKings odds** per event under `competi
 | `competitions[0].odds[0].homeTeamOdds.favorite` | `true` if home is favored. |
 | `competitions[0].odds[0].awayTeamOdds.favorite` | `true` if away is favored. |
 
-We store the **favorite’s line** (negative number, e.g. `-1.5`) and the favored team’s `sm_teams.id` as `spread_team_id`. The sync runs with the same scoreboard fetch used for scores, so spreads update automatically when the app is open.
+We store the **favorite’s line** (negative number, e.g. `-1.5` or `-27.5`) and the favored team’s `sm_teams.id` as `spread_team_id`. The sync runs with the same scoreboard fetch used for scores, so spreads update automatically when the app is open.
+
+**Cover math:** compare the favorite’s **scoring margin** (favorite points − underdog points) to **`|spread|`** (absolute value). Example: Duke −27.5 wins 71–65 → margin 6 &lt; 27.5 → **underdog covers**; Duke still wins the game, so the underdog’s owner can steal Duke. Do **not** compare margin directly to the negative stored line (6 &gt; −27.5 would incorrectly imply the favorite covered).
 
 ### Region (tournament only)
 

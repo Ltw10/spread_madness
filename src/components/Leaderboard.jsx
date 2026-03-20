@@ -4,13 +4,12 @@ import { usePlayers } from '../hooks/usePlayers'
 
 export function Leaderboard({ showHeading = true, embedded = false }) {
   const { openPlayerCard } = usePlayerModal()
-  const { getOwnedTeamIds } = useOwnership()
+  const { getAliveTeamIdsForPlayer } = useOwnership()
   const { players } = usePlayers()
 
   const aliveByPlayer = players.map((p) => ({
     player: p,
-    teamIds: getOwnedTeamIds(p.id),
-    count: getOwnedTeamIds(p.id).length,
+    count: getAliveTeamIdsForPlayer(p.id).length,
   }))
   const sorted = [...aliveByPlayer].sort((a, b) => b.count - a.count)
 
@@ -19,7 +18,9 @@ export function Leaderboard({ showHeading = true, embedded = false }) {
       {showHeading && (
         <>
           <h2 className="font-display text-lg tracking-wide text-slate-100">Leaderboard</h2>
-          <p className="mb-2 font-body text-xs text-slate-400">Teams still alive</p>
+          <p className="mb-2 font-body text-xs text-slate-400">
+            Teams still alive <span className="text-slate-500">(incl. stolen)</span>
+          </p>
         </>
       )}
       <ul className="space-y-2">
