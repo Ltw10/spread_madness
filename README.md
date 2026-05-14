@@ -33,9 +33,14 @@ Restart the dev server after changing `.env`.
 
 ### 3. Supabase setup
 
+All Spread Madness tables live in the Postgres schema **`spread_madness`** (not `public`), so they stay separate from other apps using the same Supabase database.
+
 1. Create a project at [supabase.com](https://supabase.com).
-2. In the **SQL Editor**, run the contents of `supabase/schema.sql`. This creates all tables (with the `sm_` prefix), RLS policies, and realtime. No separate seed file; teams are seeded from the ESPN API when the app first loads and `sm_teams` is empty.
-3. **Multi-game (optional):** If you want multiple pools/games (each with its own draft and ownership, sharing one bracket), run the migration: in the SQL Editor, run the contents of `supabase/migrations/20250316000000_add_game_instances.sql`. This adds game instances and scopes players, ownership, config, and transfer events per game. After that, the app will show a game selector on load; existing data is assigned to a "Default" game.
+2. **Expose the schema to the API:** **Project Settings → API → Exposed schemas** → add **`spread_madness`** → Save. (Keep `public` if you rely on it for auth or other tools.)
+3. **New database (no existing `sm_*` data):** In the **SQL Editor**, run `supabase/schema.sql`. That creates tables (still named `sm_*`), RLS, grants, and realtime inside `spread_madness`. Teams are seeded from the ESPN API when the app first loads and `sm_teams` is empty.
+4. **Already using this app with `sm_*` in `public`:** Add **`spread_madness`** to exposed schemas (step 2), then run **`supabase/migrations/20260514120000_move_sm_tables_to_spread_madness_schema.sql`** once in the SQL Editor. It moves the existing tables (and all rows) into `spread_madness` with `ALTER TABLE … SET SCHEMA`; it does not copy or delete data. **Do not** run the full `schema.sql` afterward on that project, or you would create a second empty set of tables.
+
+Multi-game support (game selector, per-pool players/ownership) is included in `schema.sql` and in the migration target tables; there is no separate migration file for it.
 
 ### 4. Run the app
 

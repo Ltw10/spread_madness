@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, SPREAD_MADNESS_SCHEMA } from '../lib/supabase'
 
 const OwnershipContext = createContext(null)
 
@@ -174,13 +174,13 @@ export function OwnershipProvider({ gameInstanceId, children }) {
     const channel = supabase.channel(`ownership-shared:${gameInstanceId}`)
     channel.on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'sm_ownership', filter: `game_instance_id=eq.${gameInstanceId}` },
+      { event: '*', schema: SPREAD_MADNESS_SCHEMA, table: 'sm_ownership', filter: `game_instance_id=eq.${gameInstanceId}` },
       () => load(true)
     )
     // Embedded `team` rows go stale when only sm_teams changes (e.g. is_eliminated after a final).
     channel.on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'sm_teams' },
+      { event: '*', schema: SPREAD_MADNESS_SCHEMA, table: 'sm_teams' },
       () => load(true)
     )
     channel.subscribe()

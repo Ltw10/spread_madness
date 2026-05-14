@@ -1,5 +1,18 @@
--- Spread Madness — run once in Supabase SQL Editor
--- Prefix sm_ to avoid conflicts when sharing a database with other projects.
+-- Spread Madness — run once in Supabase SQL Editor (greenfield / empty project).
+-- All objects live in schema `spread_madness` so this app is isolated from other apps on the same DB.
+-- Create any SQL functions / RPCs used by the app (e.g. finalize_game) in `spread_madness`, or move them with the migration from `public`.
+--
+-- Before using the app: Supabase Dashboard → Project Settings → API → Exposed schemas:
+--   add `spread_madness` (keep `public` if you still use it for auth or other apps).
+--
+-- If you already have sm_* tables in `public` with data, do NOT run this file — run
+-- supabase/migrations/20260514120000_move_sm_tables_to_spread_madness_schema.sql instead.
+
+create schema if not exists spread_madness;
+
+grant usage on schema spread_madness to anon, authenticated, service_role;
+
+set search_path = spread_madness, public;
 
 -- Teams (68 tournament teams)
 create table if not exists sm_teams (
@@ -62,7 +75,7 @@ create table if not exists sm_ownership (
 );
 
 -- One active ownership per team per game instance
-create unique index sm_ownership_one_active_per_team_per_game
+create unique index if not exists sm_ownership_one_active_per_team_per_game
   on sm_ownership (game_instance_id, team_id) where is_active = true;
 
 -- Config (global: admin password hash only)
@@ -126,10 +139,29 @@ create policy "sm_game_instances_all" on sm_game_instances for all using (true) 
 create policy "sm_game_config_all" on sm_game_config for all using (true) with check (true);
 create policy "sm_transfer_events_all" on sm_transfer_events for all using (true) with check (true);
 
--- Realtime
-alter publication supabase_realtime add table sm_games;
-alter publication supabase_realtime add table sm_ownership;
-alter publication supabase_realtime add table sm_transfer_events;
+-- PostgREST / supabase-js
+grant select, insert, update, delete on table sm_teams to anon, authenticated, service_role;
+grant select, insert, update, delete on table sm_games to anon, authenticated, service_role;
+grant select, insert, update, delete on table sm_game_instances to anon, authenticated, service_role;
+grant select, insert, update, delete on table sm_players to anon, authenticated, service_role;
+grant select, insert, update, delete on table sm_ownership to anon, authenticated, service_role;
+grant select, insert, update, delete on table sm_config to anon, authenticated, service_role;
+grant select, insert, update, delete on table sm_game_config to anon, authenticated, service_role;
+grant select, insert, update, delete on table sm_transfer_events to anon, authenticated, service_role;
+
+-- Realtime (idempotent: re-run safe)
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'spread_madness' and tablename = 'sm_games') then
+    alter publication supabase_realtime add table spread_madness.sm_games;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'spread_madness' and tablename = 'sm_ownership') then
+    alter publication supabase_realtime add table spread_madness.sm_ownership;
+  end if;
+  if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'spread_madness' and tablename = 'sm_transfer_events') then
+    alter publication supabase_realtime add table spread_madness.sm_transfer_events;
+  end if;
+end $$;
 
 -- Default config: global admin password; default game instance and its per-game config
 insert into sm_config (key, value) values

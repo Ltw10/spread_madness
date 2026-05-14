@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, SPREAD_MADNESS_SCHEMA } from '../lib/supabase'
 import { fetchSmGamesWithTeams } from '../lib/gameFinalize'
 
 export function useGames() {
@@ -32,7 +32,7 @@ export function useGames() {
   useEffect(() => {
     load()
     if (!supabase) return
-    const sub = supabase.channel('games').on('postgres_changes', { event: '*', schema: 'public', table: 'sm_games' }, load).subscribe()
+    const sub = supabase.channel('games').on('postgres_changes', { event: '*', schema: SPREAD_MADNESS_SCHEMA, table: 'sm_games' }, load).subscribe()
     return () => { sub.unsubscribe() }
   }, [])
 

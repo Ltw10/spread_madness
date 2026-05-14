@@ -233,7 +233,10 @@ export function AdminPanel({ onLogout }) {
 
       <section>
         <h3 className="font-body font-medium text-slate-300">Scores</h3>
-        <p className="text-xs text-slate-400">ESPN polls every 60s. Use this to fetch scores from ESPN and save to the database now (e.g. if auto-polling isn’t updating).</p>
+        <p className="text-xs text-slate-400">
+          ESPN polls every 60s. Fetches scores; backfills missing spreads (incl. finals); then recomputes{' '}
+          <strong className="text-slate-300">winner + cover</strong> on any final that has scores and a full spread but was missing cover (e.g. finalized before the line existed).
+        </p>
         <button
           type="button"
           disabled={syncing || !games?.length}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, SPREAD_MADNESS_SCHEMA } from '../lib/supabase'
 
 /**
  * Per-game config (draft_locked, current_round) from sm_game_config.
@@ -42,7 +42,7 @@ export function useGameConfig(gameId) {
     const channel = supabase.channel(`game_config:${gameId}`)
     channel.on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'sm_game_config', filter: `game_instance_id=eq.${gameId}` },
+      { event: '*', schema: SPREAD_MADNESS_SCHEMA, table: 'sm_game_config', filter: `game_instance_id=eq.${gameId}` },
       loadConfig
     )
     channel.subscribe()

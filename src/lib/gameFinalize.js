@@ -14,6 +14,45 @@ const SM_GAMES_WITH_TEAMS_SELECT = `
   cover_team:sm_teams!sm_games_cover_team_id_fkey(id, name)
 `
 
+/**
+ * Fix rounds 2+ games where team1_id === team2_id (bad advancement / bad refinalize).
+ * Clears the second slot and any scores so ESPN sync won't treat it as a real matchup.
+ */
+export async function repairGamesWithDuplicateOpponents(supabase) {
+  if (!supabase) return { repaired: 0 }
+  const { data: rows, error } = await supabase
+    .from('sm_games')
+    .select('id, round, team1_id, team2_id')
+    .gte('round', 2)
+  if (error) {
+    console.warn('[repairGamesWithDuplicateOpponents]', error.message)
+    return { repaired: 0, error: error.message }
+  }
+  let repaired = 0
+  const ts = new Date().toISOString()
+  for (const row of rows || []) {
+    if (!row.team1_id || !row.team2_id) continue
+    if (String(row.team1_id) !== String(row.team2_id)) continue
+    const { error: uerr } = await supabase
+      .from('sm_games')
+      .update({
+        team2_id: null,
+        team1_score: null,
+        team2_score: null,
+        status: 'scheduled',
+        winner_team_id: null,
+        cover_team_id: null,
+        spread: null,
+        spread_team_id: null,
+        updated_at: ts,
+      })
+      .eq('id', row.id)
+    if (!uerr) repaired++
+    else console.warn('[repairGamesWithDuplicateOpponents] update failed', row.id, uerr.message)
+  }
+  return { repaired }
+}
+
 export async function fetchSmGamesWithTeams(supabase) {
   const { data, error } = await supabase
     .from('sm_games')
@@ -132,9 +171,21 @@ export async function applyFinalizeEffects(supabase, game, team1Score, team2Scor
   if (game.next_game_id && winnerTeamId) {
     const { data: nextRow } = await supabase.from('sm_games').select('id, team1_id, team2_id').eq('id', game.next_game_id).single()
     if (nextRow) {
+      const w = String(winnerTeamId)
+      const t1 = nextRow.team1_id != null ? String(nextRow.team1_id) : ''
+      const t2 = nextRow.team2_id != null ? String(nextRow.team2_id) : ''
       const updates = {}
-      if (!nextRow.team1_id) updates.team1_id = winnerTeamId
-      else if (!nextRow.team2_id) updates.team2_id = winnerTeamId
+      if (!t1) {
+        if (!t2 || t2 !== w) updates.team1_id = winnerTeamId
+      } else if (!t2 && t1 !== w) {
+        updates.team2_id = winnerTeamId
+      } else if (!t2 && t1 === w) {
+        console.warn(
+          '[finalizeGame] skip advancing same team into both slots (next game)',
+          game.next_game_id,
+          'winner already in team1'
+        )
+      }
       if (Object.keys(updates).length) {
         const { error: nextErr } = await supabase
           .from('sm_games')
@@ -204,6 +255,58 @@ export async function refinalizeFinalGame(supabase, game) {
 }
 
 /**
+ * Re-run finalize effects for final games that have scores + full spread but missing or wrong `cover_team_id`.
+ * Typical cause: game was marked final before spread existed; spread was backfilled later but cover never recomputed.
+ * Skips ATS pushes (cover is legitimately null). Uses a fresh DB read (not stale client state).
+ * @returns {{ refinalized: number }}
+ */
+export async function refinalizeFinalsWithSpreadButMissingCover(supabase) {
+  if (!supabase) return { refinalized: 0 }
+  const { data: games, error } = await supabase.from('sm_games').select(SM_GAMES_WITH_TEAMS_SELECT).eq('status', 'final')
+  if (error) {
+    console.warn('[refinalizeFinalsWithSpreadButMissingCover]', error.message)
+    return { refinalized: 0 }
+  }
+  let refinalized = 0
+  for (const g of games || []) {
+    const s1 = Number(g.team1_score)
+    const s2 = Number(g.team2_score)
+    if (!Number.isFinite(s1) || !Number.isFinite(s2)) continue
+    if (g.spread == null || g.spread_team_id == null) continue
+
+    const { coverTeamId, winnerTeamId, isPush } = getCoverAndWinner(
+      s1,
+      s2,
+      g.spread,
+      g.spread_team_id,
+      g.team1_id,
+      g.team2_id
+    )
+
+    const dbWinner = g.winner_team_id != null ? String(g.winner_team_id) : ''
+    const winnerOk = dbWinner === String(winnerTeamId)
+
+    if (isPush) {
+      // Push: cover stays null; winner must still be set from scores.
+      if (winnerOk) continue
+    } else {
+      if (coverTeamId == null) continue
+      const dbCover = g.cover_team_id != null ? String(g.cover_team_id) : ''
+      const coverOk = dbCover === String(coverTeamId)
+      if (winnerOk && coverOk) continue
+    }
+
+    try {
+      await refinalizeFinalGame(supabase, g)
+      refinalized++
+    } catch (e) {
+      console.warn('[refinalizeFinalsWithSpreadButMissingCover] game', g.id, e)
+    }
+  }
+  return { refinalized }
+}
+
+/**
  * Sort finals by bracket order so earlier rounds run before later ones.
  */
 function sortFinalGamesForReplay(games) {
@@ -267,7 +370,7 @@ export async function replayFinalsFromDraftBaseline(supabase, gameInstanceId) {
 
   const { data: allOwnRows, error: draftErr } = await supabase
     .from('sm_ownership')
-    .select('team_id, player_id, created_at, acquired_round, is_active')
+    .select('team_id, player_id, created_at, acquired_round, is_active, transferred_from_player_id')
     .eq('game_instance_id', gameInstanceId)
 
   if (draftErr) return { ok: false, error: draftErr.message }

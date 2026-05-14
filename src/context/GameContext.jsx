@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, SPREAD_MADNESS_SCHEMA } from '../lib/supabase'
 import { hashPassword, verifyPassword } from '../lib/passwordHash'
 
 const STORAGE_KEY = 'spread_madness_game_id'
@@ -50,7 +50,7 @@ export function GameProvider({ children }) {
     if (!supabase) return
     const sub = supabase
       .channel('game_instances')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sm_game_instances' }, loadGames)
+      .on('postgres_changes', { event: '*', schema: SPREAD_MADNESS_SCHEMA, table: 'sm_game_instances' }, loadGames)
       .subscribe()
     return () => sub.unsubscribe()
   }, [loadGames])

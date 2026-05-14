@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, SPREAD_MADNESS_SCHEMA } from '../lib/supabase'
 import { useGame } from '../context/GameContext'
 
 export function usePlayers() {
@@ -43,7 +43,7 @@ export function usePlayers() {
     const channel = supabase.channel(`players:${currentGameId}`)
     channel.on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'sm_players', filter: `game_instance_id=eq.${currentGameId}` },
+      { event: '*', schema: SPREAD_MADNESS_SCHEMA, table: 'sm_players', filter: `game_instance_id=eq.${currentGameId}` },
       load
     )
     channel.subscribe()

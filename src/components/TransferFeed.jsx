@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, SPREAD_MADNESS_SCHEMA } from '../lib/supabase'
 import { useGame } from '../context/GameContext'
 import { usePlayerModal } from '../context/PlayerModalContext'
 
@@ -31,7 +31,7 @@ export function TransferFeed({ limit = 10 }) {
     const channel = supabase.channel(`transfer_feed:${currentGameId}`)
     channel.on(
       'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'sm_transfer_events', filter: `game_instance_id=eq.${currentGameId}` },
+      { event: 'INSERT', schema: SPREAD_MADNESS_SCHEMA, table: 'sm_transfer_events', filter: `game_instance_id=eq.${currentGameId}` },
       load
     )
     channel.subscribe()
